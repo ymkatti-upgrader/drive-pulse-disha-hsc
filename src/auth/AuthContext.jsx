@@ -10,6 +10,8 @@ export const mockRoles = [
   'Group Functional HOD',
   'Group DISHA HSC PIC',
   'Branch DISHA PIC',
+  'Branch Disha HSC PIC',
+  'NG PIC',
   'Location Functional HOD',
   'Viewer',
   'System Administrator',
@@ -106,6 +108,8 @@ export function getPrimaryRole(user) {
   if (roles.some(role => normalizedText(role) === 'super admin')) return 'Super Admin'
   if (roles.some(role => normalizedText(role) === 'admin')) return 'Admin'
   if (roles.some(role => normalizedText(role) === 'system administrator')) return 'System Administrator'
+  if (roles.some(role => normalizedText(role) === 'branch disha hsc pic')) return 'Branch Disha HSC PIC'
+  if (roles.some(role => normalizedText(role) === 'ng pic')) return 'NG PIC'
   return roles[0] || user?.role || 'Viewer'
 }
 
@@ -118,7 +122,11 @@ export function hasAdminAccess(user) {
 }
 
 export function isSystemAdmin(user) {
-  return getUserAccess(user).some(item => normalizedText(item.role) === 'super admin' || normalizedText(item.user_type) === 'system admin')
+  return getUserAccess(user).some(item => {
+    const role = normalizedText(item.role)
+    const userType = normalizedText(item.user_type)
+    return role === 'super admin' || role === 'system administrator' || userType === 'system admin'
+  })
 }
 
 function normalizedText(value) {
@@ -143,8 +151,8 @@ export function canAccessScope(user, { department, location } = {}) {
   return access.some(item => {
     const itemDepartments = splitScopeValues(item.department).map(normalizedText).filter(Boolean)
     const itemLocations = splitScopeValues(item.location).map(normalizedText).filter(Boolean)
-    const departmentAllowed = !wantedDepartments.length || itemDepartments.includes('all') || wantedDepartments.some(departmentValue => itemDepartments.includes(departmentValue))
-    const locationAllowed = !wantedLocations.length || itemLocations.includes('all') || wantedLocations.some(locationValue => itemLocations.includes(locationValue))
+    const departmentAllowed = !wantedDepartments.length || itemDepartments.includes('all') || !itemDepartments.length || wantedDepartments.some(departmentValue => itemDepartments.includes(departmentValue))
+    const locationAllowed = !wantedLocations.length || itemLocations.includes('all') || !itemLocations.length || wantedLocations.some(locationValue => itemLocations.includes(locationValue))
     return departmentAllowed && locationAllowed
   })
 }

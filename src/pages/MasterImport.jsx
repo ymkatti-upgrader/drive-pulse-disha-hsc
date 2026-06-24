@@ -65,6 +65,8 @@ const userRoleLookup = new Map([
   ['systemadmin', 'System Administrator'],
   ['groupdishahscpic', 'Group DISHA HSC PIC'],
   ['branchdishapic', 'Branch DISHA PIC'],
+  ['branchdishahscpic', 'Branch Disha HSC PIC'],
+  ['ngpic', 'NG PIC'],
   ['admin', 'Admin'],
   ['superadmin', 'Super Admin'],
 ])

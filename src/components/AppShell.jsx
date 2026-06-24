@@ -9,6 +9,8 @@ const roleLabels = {
   'Group Functional HOD': 'Group Functional HOD',
   'Group DISHA HSC PIC': 'Group DISHA HSC PIC',
   'Branch DISHA PIC': 'Branch DISHA PIC',
+  'Branch Disha HSC PIC': 'Branch Disha HSC PIC',
+  'NG PIC': 'NG PIC',
   'Location Functional HOD': 'Location Functional HOD',
   Viewer: 'Viewer',
   'System Administrator': 'System Administrator',

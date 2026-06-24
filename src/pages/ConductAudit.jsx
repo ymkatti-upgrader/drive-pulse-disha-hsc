@@ -551,14 +551,16 @@ export default function ConductAudit() {
 
   useEffect(() => {
     if (!items.length || !auditId) return
+    const currentAuditLocation = currentAudit?.location || ''
+    const currentAuditDepartments = splitDelimitedValues(currentAudit?.departments || currentAudit?.department)
     items.forEach(item => {
       if (item.result === 'NG') {
-        upsertAutoCapa({ auditId, question: item, remarks: item.remarks, currentCondition: item.currentCondition, gapIdentified: '', evidenceUploaded: item.evidenceUploaded })
+        upsertAutoCapa({ auditId, auditLocation: currentAuditLocation, auditDepartments: currentAuditDepartments, question: item, remarks: item.remarks, currentCondition: item.currentCondition, gapIdentified: '', evidenceUploaded: item.evidenceUploaded })
       } else {
         cancelAutoCapa(auditId, item.id)
       }
     })
-  }, [items, auditId, upsertAutoCapa, cancelAutoCapa])
+  }, [items, auditId, currentAudit?.location, currentAudit?.departments, currentAudit?.department, upsertAutoCapa, cancelAutoCapa])
 
   const dqGroups = useMemo(() => groupChecklistByDq(items), [items])
   const selectedDqFromUrl = searchParams.get('dq') || ''

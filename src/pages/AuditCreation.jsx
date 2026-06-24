@@ -26,7 +26,7 @@ function uniqueById(rows) {
 function isAuditorRole(mapping = {}) {
   const role = normalizedText(mapping.role)
   const userType = normalizedText(mapping.user_type)
-  return role.includes('disha hsc pic') || role.includes('branch pic') || role.includes('branch disha pic') || userType.includes('auditor')
+  return role.includes('disha hsc pic') || role.includes('branch pic') || role.includes('branch disha pic') || role.includes('branch disha hsc pic') || role.includes('ng pic') || userType.includes('auditor') || userType.includes('ng pic')
 }
 
 function canonicalDepartment(value) {
@@ -111,6 +111,13 @@ export default function AuditCreation() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!user?.id || form.auditorId) return
+    if (auditorOptions.some(option => option.value === user.id)) {
+      setForm(current => ({ ...current, auditorId: user.id }))
+    }
+  }, [user?.id, auditorOptions, form.auditorId])
 
   const selectedDepartments = form.departments
   const selectedAuditor = auditorOptions.find(option => option.value === form.auditorId) || null
