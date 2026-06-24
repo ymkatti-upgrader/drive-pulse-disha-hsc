@@ -9,6 +9,7 @@ export const mockRoles = [
   'CEO',
   'Group Functional HOD',
   'Group DISHA HSC PIC',
+  'Group Disha HSC PIC',
   'Branch DISHA PIC',
   'Branch Disha HSC PIC',
   'NG PIC',
@@ -55,6 +56,17 @@ function normalizeActive(value) {
   const flag = String(value ?? '').trim().toLowerCase()
   if (['no', 'n', 'false', '0', 'inactive'].includes(flag)) return false
   return true
+}
+
+function normalizedText(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function normalizeAuditRole(value) {
+  const role = normalizedText(value)
+  if (role === 'branch disha pic') return 'branch disha hsc pic'
+  if (role === 'group disha hsc pic') return 'group disha hsc pic'
+  return role
 }
 
 function sanitizeUser(user) {
@@ -108,7 +120,8 @@ export function getPrimaryRole(user) {
   if (roles.some(role => normalizedText(role) === 'super admin')) return 'Super Admin'
   if (roles.some(role => normalizedText(role) === 'admin')) return 'Admin'
   if (roles.some(role => normalizedText(role) === 'system administrator')) return 'System Administrator'
-  if (roles.some(role => normalizedText(role) === 'branch disha hsc pic')) return 'Branch Disha HSC PIC'
+  if (roles.some(role => normalizeAuditRole(role) === 'group disha hsc pic')) return 'Group Disha HSC PIC'
+  if (roles.some(role => normalizeAuditRole(role) === 'branch disha hsc pic')) return 'Branch Disha HSC PIC'
   if (roles.some(role => normalizedText(role) === 'ng pic')) return 'NG PIC'
   return roles[0] || user?.role || 'Viewer'
 }
@@ -129,8 +142,13 @@ export function isSystemAdmin(user) {
   })
 }
 
-function normalizedText(value) {
-  return String(value || '').trim().toLowerCase()
+export function canAccessAuditModule(user) {
+  return getUserAccess(user).some(item => {
+    const role = normalizeAuditRole(item.role)
+    const userType = normalizeAuditRole(item.user_type)
+    return ['super admin', 'group disha hsc pic', 'branch disha hsc pic'].includes(role)
+      || ['super admin', 'group disha hsc pic', 'branch disha hsc pic'].includes(userType)
+  })
 }
 
 function splitScopeValues(value) {

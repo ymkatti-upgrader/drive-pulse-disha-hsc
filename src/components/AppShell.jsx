@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowRight, Bell, BookOpenCheck, ClipboardCheck, FileBarChart, LayoutDashboard, LogOut, Menu, MoreHorizontal, Settings2, ShieldCheck, Target, X } from 'lucide-react'
 import { useState } from 'react'
-import { getPrimaryRole, hasFullAccess, useAuth } from '../auth/AuthContext'
+import { canAccessAuditModule, getPrimaryRole, hasFullAccess, useAuth } from '../auth/AuthContext'
 import { useNotifications } from '../notifications/NotificationContext'
 
 const roleLabels = {
@@ -42,17 +42,19 @@ export default function AppShell() {
   const roleLabel = roleLabels[getPrimaryRole(user)] || getPrimaryRole(user)
   const mobileNo = user?.mobile_no || user?.mobile || ''
   const showLeadershipReview = hasFullAccess(user) || leadershipRoles.includes(getPrimaryRole(user))
+  const showAuditModule = canAccessAuditModule(user)
   const showMasters = (user?.access || []).some(item => {
     const role = String(item.role || '').trim().toLowerCase()
     const userType = String(item.user_type || '').trim().toLowerCase()
     return role === 'super admin' || userType === 'system admin'
   })
   const sidebarNav = desktopNav.filter(item => {
+    if (item.to === '/audits/new') return showAuditModule
     if (item.to === '/management-review') return showLeadershipReview
     if (item.to === '/masters') return showMasters
     return true
   })
-  const isMoreRoute = ['/verification', '/yokoten', '/masters', '/action-center', '/management-review'].some(path => location.pathname.startsWith(path))
+  const isMoreRoute = ['/verification', '/yokoten', '/masters', '/action-center', '/management-review', '/audits'].some(path => location.pathname.startsWith(path))
 
   function handleLogout() {
     logout()
@@ -138,7 +140,7 @@ export default function AppShell() {
     </>}
 
     <nav className="bottom-nav">
-      {mobileNav.map(({ to, label, icon: Icon }) => <NavLink to={to} key={to}><Icon size={20} /><span>{label}</span></NavLink>)}
+      {mobileNav.filter(item => item.to !== '/audits/new' || showAuditModule).map(({ to, label, icon: Icon }) => <NavLink to={to} key={to}><Icon size={20} /><span>{label}</span></NavLink>)}
       <button className={moreOpen || isMoreRoute ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal size={20} /><span>More</span></button>
     </nav>
   </div>

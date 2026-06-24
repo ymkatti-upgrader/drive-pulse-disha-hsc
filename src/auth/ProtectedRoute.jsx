@@ -1,5 +1,5 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
-import { useAuth } from './AuthContext'
+import { canAccessAuditModule, useAuth } from './AuthContext'
 
 export default function ProtectedRoute() {
   const { isAuthenticated, user } = useAuth()
@@ -8,5 +8,13 @@ export default function ProtectedRoute() {
   if (!isAuthenticated) return <Navigate to="/login" replace state={{ from: location.pathname }} />
   if (user?.must_change_password && location.pathname !== '/reset-password') return <Navigate to="/reset-password" replace />
 
+  return <Outlet />
+}
+
+export function AuditRouteGuard() {
+  const { user } = useAuth()
+  const location = useLocation()
+
+  if (!canAccessAuditModule(user)) return <Navigate to="/dashboard" replace state={{ from: location.pathname }} />
   return <Outlet />
 }

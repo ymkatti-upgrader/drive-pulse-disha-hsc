@@ -15,7 +15,7 @@ import MasterData from './pages/MasterData'
 import MasterImport from './pages/MasterImport'
 import YokotenLibrary from './pages/YokotenLibrary'
 import ActionCenter from './pages/ActionCenter'
-import ProtectedRoute from './auth/ProtectedRoute'
+import ProtectedRoute, { AuditRouteGuard } from './auth/ProtectedRoute'
 import { isSystemAdmin, useAuth } from './auth/AuthContext'
 
 export default function App() {
@@ -26,8 +26,10 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route element={<AppShell />}>
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/audits/new" element={<AuditCreation />} />
-        <Route path="/audits/:id/conduct" element={<ConductAudit />} />
+        <Route element={<AuditRouteGuard />}>
+          <Route path="/audits/new" element={<AuditCreation />} />
+          <Route path="/audits/:id/conduct" element={<ConductAudit />} />
+        </Route>
         <Route path="/improvements" element={<CapaTracker />} />
         <Route path="/improvements/:id" element={<CapaDetail />} />
         <Route path="/capa" element={<Navigate to="/improvements" replace />} />
