@@ -165,8 +165,7 @@ export default function CapaDetail() {
   const fiveWhys = Array.isArray(capa.fiveWhys) ? capa.fiveWhys : ['', '', '', '', '']
   const answeredWhys = fiveWhys.filter(value => value.trim()).length
   const whyCompletion = answeredWhys * 20
-  const whyRequired = ['Critical', 'Major', 'High'].includes(capa.riskLevel) || capa.repeatFinding
-  const whyRule = capa.repeatFinding ? 'Required: Repeat Finding' : whyRequired ? `Required: ${capa.riskLevel} Risk` : 'Optional: Low Risk'
+  const whyRule = 'Optional: 5 Why analysis'
   const plan = capa.countermeasurePlan || { temporary: '', permanent: '', responsiblePerson: '', supportingDepartment: '', targetCompletionDate: '', estimatedCost: '', approvalRequired: 'No', approver: '', expectedResult: '', implementationStatus: 'Planned' }
   const implementationStages = ['Planned', 'In Progress', 'Completed']
   const implementationIndex = implementationStages.indexOf(plan.implementationStatus)
@@ -197,11 +196,6 @@ export default function CapaDetail() {
   }
 
   function saveAnalysis() {
-    if (whyRequired && (whyCompletion < 100 || !capa.rootCauseSummary?.trim())) {
-      setAnalysisError('Complete all five Whys and the Root Cause Summary before saving this required analysis.')
-      setAnalysisSaved(false)
-      return
-    }
     updateImprovementAnalysis(capa.capaId, { rootCause: capa.rootCauseSummary || capa.rootCause || '' })
     setAnalysisError('')
     setAnalysisSaved(true)
@@ -447,9 +441,9 @@ export default function CapaDetail() {
       <section className="card panel five-why-card">
         <div className="five-why-head"><div><span className="eyebrow">TOYOTA PROBLEM SOLVING</span><h2>5 Why Analysis</h2><p>{whyRule}</p><label className="repeat-finding"><input type="checkbox" checked={capa.repeatFinding} onChange={event => { updateImprovementAnalysis(capa.capaId, { repeatFinding: event.target.checked }); setAnalysisError(''); setAnalysisSaved(false) }} /> Repeat Finding</label></div><div className="five-why-score"><strong>{whyCompletion}%</strong><span>5 Why Completion</span></div></div>
         <div className="five-why-progress"><div className="progress"><span style={{ width: `${whyCompletion}%` }} /></div><div>{[0, 20, 40, 60, 80, 100].map(step => <span className={whyCompletion >= step ? 'active' : ''} key={step}>{step}%</span>)}</div></div>
-        <div className="five-why-list">{fiveWhys.map((why, index) => <label key={index}><span><b>{index + 1}</b><strong>Why {index + 1}{whyRequired && <em>*</em>}</strong></span><textarea rows="2" value={why} onChange={event => updateWhy(index, event.target.value)} placeholder={index === 0 ? 'Why did the gap occur?' : 'Why did the previous cause occur?'} /></label>)}</div>
-        <label className="root-cause-summary"><span>Root Cause Summary {whyRequired && <em>* Required</em>}</span><textarea rows="4" value={capa.rootCauseSummary || ''} onChange={event => { updateImprovementAnalysis(capa.capaId, { rootCauseSummary: event.target.value }); setAnalysisSaved(false); setAnalysisError('') }} placeholder="Summarize the confirmed root cause based on the 5 Why analysis..." /></label>
-        <div className={`five-why-actions ${analysisError ? 'has-error' : ''}`}><span>{analysisError || (analysisSaved ? 'Analysis saved successfully' : whyRequired && whyCompletion < 100 ? 'Complete all five Whys for this finding.' : 'Analysis is ready to save.')}</span><button className="primary-button" onClick={saveAnalysis}><Save size={18} /> Save Analysis</button></div>
+        <div className="five-why-list">{fiveWhys.map((why, index) => <label key={index}><span><b>{index + 1}</b><strong>Why {index + 1}</strong></span><textarea rows="2" value={why} onChange={event => updateWhy(index, event.target.value)} placeholder={index === 0 ? 'Why did the gap occur?' : 'Why did the previous cause occur?'} /></label>)}</div>
+        <label className="root-cause-summary"><span>Root Cause Summary</span><textarea rows="4" value={capa.rootCauseSummary || ''} onChange={event => { updateImprovementAnalysis(capa.capaId, { rootCauseSummary: event.target.value }); setAnalysisSaved(false); setAnalysisError('') }} placeholder="Summarize the confirmed root cause based on the 5 Why analysis..." /></label>
+        <div className={`five-why-actions ${analysisError ? 'has-error' : ''}`}><span>{analysisError || (analysisSaved ? 'Analysis saved successfully' : 'Analysis is ready to save.')}</span><button className="primary-button" onClick={saveAnalysis}><Save size={18} /> Save Analysis</button></div>
       </section>
       <section className="card panel ai-sensei-card">
         <div className="panel-head ai-sensei-head">
