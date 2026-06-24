@@ -8,7 +8,7 @@ import { requireSupabase } from '../supabaseClient'
 
 const AUDIT_TYPE = 'Disha HanSaChu Audit'
 const LOCATIONS = ['BL06A Sales', 'BL06A Service', 'BL06B', 'BL06D', 'BL06E']
-const DEPARTMENTS = ['Sales', 'Service', 'U-Trust', 'VAS', 'Accessories', 'Other']
+const CREATION_DRAFT_KEY = 'disha-hsc-audit-creation-draft'
 
 function normalizedText(value) {
   return String(value || '').trim().toLowerCase()
@@ -27,15 +27,6 @@ function isAuditorRole(mapping = {}) {
   const role = normalizedText(mapping.role)
   const userType = normalizedText(mapping.user_type)
   return role.includes('disha hsc pic') || role.includes('branch pic') || role.includes('branch disha pic') || role.includes('branch disha hsc pic') || role.includes('ng pic') || userType.includes('auditor') || userType.includes('ng pic')
-}
-
-function canonicalDepartment(value) {
-  const normalized = normalizedText(value)
-  if (normalized === 'service') return 'Service & Parts'
-  if (normalized === 'u-trust') return 'Used Car'
-  if (normalized === 'vas') return 'Value Chain'
-  if (normalized === 'accessories') return 'Accessory'
-  return value
 }
 
 function buildAuditorOptions(users, mappingsByUser) {
@@ -71,13 +62,27 @@ export default function AuditCreation() {
   const scopedAudits = filterByUserAccess(user, audits, item => ({ department: item.department, location: item.location }))
   const [auditorOptions, setAuditorOptions] = useState([])
   const [validationError, setValidationError] = useState('')
+  const [auditId, setAuditId] = useState('')
   const [form, setForm] = useState({
     location: '',
-    departments: [],
-    otherDepartment: '',
     auditorId: '',
     startDate: new Date().toISOString().slice(0, 10),
   })
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(CREATION_DRAFT_KEY))
+      if (!stored || typeof stored !== 'object') return
+      if (stored.auditId) setAuditId(stored.auditId)
+      setForm(current => ({
+        location: stored.location || current.location,
+        auditorId: stored.auditorId || current.auditorId,
+        startDate: stored.startDate || current.startDate,
+      }))
+    } catch {
+      // ignore malformed local draft
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -119,50 +124,58 @@ export default function AuditCreation() {
     }
   }, [user?.id, auditorOptions, form.auditorId])
 
-  const selectedDepartments = form.departments
   const selectedAuditor = auditorOptions.find(option => option.value === form.auditorId) || null
-  const otherDepartmentSelected = selectedDepartments.includes('Other')
-  const otherDepartmentValid = !otherDepartmentSelected || Boolean(form.otherDepartment.trim())
 
-  function updateDepartments(department) {
+  function saveCreationDraft() {
+    const nextAuditId = auditId || `AUD-${Date.now()}`
+    setAuditId(nextAuditId)
+    const draft = {
+      id: nextAuditId,
+      audit_type: AUDIT_TYPE,
+      location: form.location,
+      departments: [],
+      department: '',
+      other_department: '',
+      auditor_id: selectedAuditor?.value || '',
+      auditor_name: selectedAuditor?.label || '',
+      start_date: form.startDate,
+      date: form.startDate,
+      score: null,
+      progress: 0,
+      priority: 'Medium',
+      status: 'Draft',
+    }
+    localStorage.setItem(CREATION_DRAFT_KEY, JSON.stringify({
+      auditId: nextAuditId,
+      location: form.location,
+      auditorId: form.auditorId,
+      startDate: form.startDate,
+      savedAt: new Date().toISOString(),
+    }))
+    createAudit(draft)
     setValidationError('')
-    setForm(current => {
-      const departments = current.departments.includes(department)
-        ? current.departments.filter(item => item !== department)
-        : [...current.departments, department]
-      return {
-        ...current,
-        departments,
-        otherDepartment: department === 'Other' && !departments.includes('Other') ? '' : current.otherDepartment,
-      }
-    })
   }
 
   function continueToChecklist() {
     const issues = []
     if (!form.location) issues.push('Location is required.')
-    if (!selectedDepartments.length) issues.push('At least one department is required.')
     if (!form.auditorId) issues.push('Auditor name is required.')
     if (!form.startDate) issues.push('Audit start date is required.')
-    if (!otherDepartmentValid) issues.push('Specify department is required when Other is selected.')
 
     if (issues.length) {
       setValidationError(issues[0])
       return
     }
 
-    const auditId = `AUD-${Date.now()}`
-    const departmentValues = selectedDepartments.filter(item => item !== 'Other')
-    const departments = [...departmentValues, ...(otherDepartmentSelected && form.otherDepartment.trim() ? [form.otherDepartment.trim()] : [])]
-    const canonicalDepartments = departments.map(canonicalDepartment)
-
+    const nextAuditId = auditId || `AUD-${Date.now()}`
+    setAuditId(nextAuditId)
     createAudit({
-      id: auditId,
+      id: nextAuditId,
       audit_type: AUDIT_TYPE,
       location: form.location,
-      departments,
-      department: canonicalDepartments.join(', '),
-      other_department: otherDepartmentSelected ? form.otherDepartment.trim() : '',
+      departments: [],
+      department: '',
+      other_department: '',
       auditor_id: selectedAuditor?.value || '',
       auditor_name: selectedAuditor?.label || '',
       start_date: form.startDate,
@@ -172,7 +185,14 @@ export default function AuditCreation() {
       priority: 'Medium',
       status: 'In Progress',
     })
-    navigate(`/audits/${auditId}/conduct`)
+    localStorage.setItem(CREATION_DRAFT_KEY, JSON.stringify({
+      auditId: nextAuditId,
+      location: form.location,
+      auditorId: form.auditorId,
+      startDate: form.startDate,
+      savedAt: new Date().toISOString(),
+    }))
+    navigate(`/audits/${nextAuditId}/conduct`)
   }
 
   const upcoming = scopedAudits.filter(item => normalizedText(item.status) === 'scheduled').length
@@ -195,28 +215,20 @@ export default function AuditCreation() {
         <div className="form-grid">
           <label className="wide">Audit Type<input value={AUDIT_TYPE} readOnly /></label>
           <label className="wide">Location<select value={form.location} onChange={event => setForm(current => ({ ...current, location: event.target.value }))}><option value="">Select location</option>{LOCATIONS.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
-          <div className="wide">
-            <span>Department</span>
-            <div className="department-grid">
-              {DEPARTMENTS.map(item => <label key={item} className="department-option"><input type="checkbox" checked={selectedDepartments.includes(item)} onChange={() => updateDepartments(item)} /> <span>{item}</span></label>)}
-            </div>
-            {otherDepartmentSelected && <input className="wide-input" value={form.otherDepartment} onChange={event => setForm(current => ({ ...current, otherDepartment: event.target.value }))} placeholder="Specify department" />}
-          </div>
           <label className="wide">Auditor Name
             <div className="input-icon"><UserRound size={17} /><select value={form.auditorId} onChange={event => setForm(current => ({ ...current, auditorId: event.target.value }))}><option value="">Select auditor</option>{auditorOptions.map(item => <option key={item.id} value={item.value}>{item.label}</option>)}</select></div>
           </label>
           <label>Audit Start Date<div className="input-icon"><Calendar size={17} /><input type="date" value={form.startDate} onChange={event => setForm(current => ({ ...current, startDate: event.target.value }))} /></div></label>
         </div>
         {validationError && <div className="audit-checklist-note" role="alert"><AlertCircle size={18} /><span>{validationError}</span></div>}
-        <div className="form-footer"><button className="secondary-button"><Save size={17} /> Save draft</button><button className="primary-button" onClick={continueToChecklist}>Continue to checklist <ChevronRight size={17} /></button></div>
+        <div className="form-footer"><button className="secondary-button" type="button" onClick={saveCreationDraft}><Save size={17} /> Save draft</button><button className="primary-button" type="button" onClick={continueToChecklist}>Continue to checklist <ChevronRight size={17} /></button></div>
       </section>
       <section>
         <div className="list-toolbar"><SearchBar placeholder="Search audits" /></div>
         <div className="card data-list">
           {scopedAudits.map(a => {
             const title = a.audit_type || a.title || AUDIT_TYPE
-            const departments = Array.isArray(a.departments) ? a.departments : String(a.department || '').split(',').map(part => part.trim()).filter(Boolean)
-            const subtitle = [a.location, departments.join(', '), a.start_date || a.date].filter(Boolean).join(' - ')
+            const subtitle = [a.location, a.start_date || a.date].filter(Boolean).join(' - ')
             const canDelete = isSystemAdmin(user) && isInProgressAuditStatus(a.status)
             return <DataRow key={a.id} title={title} subtitle={`${a.id} - ${subtitle || 'No details'}`} meta={a.score ? `${a.score}%` : null} status={a.status} onClick={() => isInProgressAuditStatus(a.status) && navigate(`/audits/${a.id}/conduct`)} onDelete={canDelete ? () => handleDeleteAudit(a.id) : undefined} />
           })}

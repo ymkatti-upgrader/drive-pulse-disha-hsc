@@ -5,7 +5,7 @@ import { isInProgressAuditStatus, useAudits } from '../audits/AuditContext'
 import { useAuditChecklist } from '../audits/useAuditChecklist'
 import { Progress } from '../components/UI'
 import { useCapas } from '../capa/CapaContext'
-import { isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { getPrimaryRole, isSystemAdmin, useAuth } from '../auth/AuthContext'
 import { requireSupabase } from '../supabaseClient'
 
 function weightedScore(items) {
@@ -85,6 +85,34 @@ function combineCurrentConditionAndGap(currentCondition, gapObserved) {
 
 function normalizeRequirementFlag(value) {
   return normalizeText(value) === 'yes'
+}
+
+function describeSupabaseError(error) {
+  if (!error) return 'Unknown Supabase error'
+  const parts = [error.message || 'Unknown Supabase error']
+  if (error.code) parts.push(`code=${error.code}`)
+  if (error.details) parts.push(`details=${error.details}`)
+  if (error.hint) parts.push(`hint=${error.hint}`)
+  return parts.join(' | ')
+}
+
+function logAuditSaveContext({ operation, table, user, auditId, auditLocation, auditDepartments, payload, error }) {
+  const payloadKeys = Array.isArray(payload) ? Object.keys(payload[0] || {}) : Object.keys(payload || {})
+  console.info('[Audit save context]', {
+    operation,
+    table,
+    role: getPrimaryRole(user),
+    userId: user?.id || '',
+    userEmail: user?.email || user?.mobile_no || '',
+    auditId,
+    location: auditLocation || '',
+    departments: Array.isArray(auditDepartments) ? auditDepartments : [],
+    payloadKeys,
+    errorCode: error?.code || '',
+    errorMessage: error?.message || '',
+    errorDetails: error?.details || '',
+    errorHint: error?.hint || '',
+  })
 }
 
 function isDeletableAuditStatus(status) {
@@ -354,9 +382,10 @@ export default function ConductAudit() {
   const [resolvedRespondedById, setResolvedRespondedById] = useState('')
   const { audits, submitAudit, deleteAudit } = useAudits()
   const { capas, upsertAutoCapa, cancelAutoCapa, deleteCapasByAudit } = useCapas()
-  const { checklist, checklistLoading, checklistError } = useAuditChecklist()
+  const { checklist, loading: checklistLoading, error: checklistError } = useAuditChecklist()
   const draftHydratedRef = useRef(false)
   const lastDraftSignatureRef = useRef('')
+  const lastDraftErrorRef = useRef('')
   const draftSaveTimerRef = useRef(null)
   const currentAudit = audits.find(item => item.id === id) || audits.find(item => isInProgressAuditStatus(item.status)) || audits[0]
   const auditId = currentAudit?.id || id || ''
@@ -633,6 +662,7 @@ export default function ConductAudit() {
     }
     if (!draftRespondedById) {
       setError('Logged-in user not found in backend. Please re-login.')
+      lastDraftErrorRef.current = 'Logged-in user not found in backend. Please re-login.'
       return false
     }
     if (draftSaveTimerRef.current) {
@@ -642,6 +672,15 @@ export default function ConductAudit() {
     setDraftSaving(true)
     try {
       const client = requireSupabase()
+      logAuditSaveContext({
+        operation: 'upsert',
+        table: 'audit_responses',
+        user,
+        auditId,
+        auditLocation: currentAudit?.location || '',
+        auditDepartments: currentAuditDepartments || [],
+        payload: draftPayload,
+      })
       const { error: saveError } = await client.from('audit_responses').upsert(draftPayload, { onConflict: 'audit_id,checklist_id' })
       if (saveError) throw saveError
       lastDraftSignatureRef.current = draftSignature
@@ -650,10 +689,22 @@ export default function ConductAudit() {
         setDraftMessage('Draft saved')
         window.setTimeout(() => setDraftMessage(''), 1600)
       }
+      lastDraftErrorRef.current = ''
       return true
     } catch (saveError) {
+      logAuditSaveContext({
+        operation: 'upsert',
+        table: 'audit_responses',
+        user,
+        auditId,
+        auditLocation: currentAudit?.location || '',
+        auditDepartments: currentAuditDepartments || [],
+        payload: draftPayload,
+        error: saveError,
+      })
       if (draftStorageKey) localStorage.setItem(draftStorageKey, JSON.stringify({ rows: draftPayload, updatedAt: new Date().toISOString() }))
-      setError(saveError?.message || 'Unable to save draft right now.')
+      lastDraftErrorRef.current = describeSupabaseError(saveError)
+      setError(lastDraftErrorRef.current)
       return false
     } finally {
       setDraftSaving(false)
@@ -788,6 +839,11 @@ export default function ConductAudit() {
       if (completion.ngMissingCondition) issues.push(`${completion.ngMissingCondition} NG findings without current condition`)
       if (completion.capaPending) issues.push(`${completion.capaPending} improvement actions pending`)
       setError(`Audit cannot be submitted: ${issues.join(', ')}.`)
+      return
+    }
+    const saved = await persistDraftResponses(false)
+    if (!saved) {
+      setError(`Audit cannot be submitted because draft save failed: ${lastDraftErrorRef.current || 'Unable to save draft right now.'}`)
       return
     }
     setError('')

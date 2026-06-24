@@ -48,7 +48,14 @@ export function AuditProvider({ children }) {
   }, [commit])
 
   const createAudit = useCallback(audit => {
-    commit(current => [{ ...audit, id: audit.id || `AUD-${Date.now()}`, status: audit.status || 'In Progress' }, ...current])
+    const nextAudit = { ...audit, id: audit.id || `AUD-${Date.now()}`, status: audit.status || 'In Progress' }
+    commit(current => {
+      const index = current.findIndex(item => item.id === nextAudit.id)
+      if (index < 0) return [nextAudit, ...current]
+      const next = [...current]
+      next[index] = { ...current[index], ...nextAudit }
+      return next
+    })
   }, [commit])
 
   const value = useMemo(() => ({ audits, submitAudit, createAudit, deleteAudit }), [audits, submitAudit, createAudit, deleteAudit])
