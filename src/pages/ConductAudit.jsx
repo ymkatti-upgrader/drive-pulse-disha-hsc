@@ -5,7 +5,7 @@ import { isInProgressAuditStatus, useAudits } from '../audits/AuditContext'
 import { useAuditChecklist } from '../audits/useAuditChecklist'
 import { Progress } from '../components/UI'
 import { useCapas } from '../capa/CapaContext'
-import { canAccessAuditModule, getPrimaryRole, isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { canAccessAuditModule, canManageDishaWorkflow, filterByUserAccess, getPrimaryRole, isSystemAdmin, useAuth } from '../auth/AuthContext'
 import { requireSupabase } from '../supabaseClient'
 
 function weightedScore(items) {
@@ -414,7 +414,9 @@ export default function ConductAudit() {
   const lastDraftSignatureRef = useRef('')
   const lastDraftErrorRef = useRef('')
   const draftSaveTimerRef = useRef(null)
-  const currentAudit = audits.find(item => item.id === id) || audits.find(item => isInProgressAuditStatus(item.status)) || audits[0]
+  const canSeeAllWorkflowData = canManageDishaWorkflow(user)
+  const visibleAudits = canSeeAllWorkflowData ? audits : filterByUserAccess(user, audits, item => ({ department: item.department, location: item.location }))
+  const currentAudit = visibleAudits.find(item => item.id === id) || visibleAudits.find(item => isInProgressAuditStatus(item.status)) || visibleAudits[0]
   const auditId = currentAudit?.id || id || ''
   const canEditAudit = canAccessAuditModule(user) || isSystemAdmin(user)
   const isReadOnly = !canEditAudit

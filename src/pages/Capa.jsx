@@ -2,7 +2,7 @@ import { AlertTriangle, CheckCircle2, Clock3, Search, Target } from 'lucide-reac
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAudits } from '../audits/AuditContext'
-import { canAccessAuditModule, filterByUserAccess, isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { canManageDishaWorkflow, canViewAuditModule, filterByUserAccess, useAuth } from '../auth/AuthContext'
 import { PageHeader, Progress, StatCard, StatusBadge } from '../components/UI'
 import { useCapas } from '../capa/CapaContext'
 import { requireSupabase } from '../supabaseClient'
@@ -64,7 +64,8 @@ export default function CapaTracker() {
   const [assignedNgRows, setAssignedNgRows] = useState([])
   const [assignedNgError, setAssignedNgError] = useState('')
   const navigate = useNavigate()
-  const scopedCapas = filterByUserAccess(user, capas, capa => ({ department: capa.departmentOwner || capa.department || capa.area, location: capa.location || capa.locationAspect }))
+  const canSeeAllWorkflowData = canManageDishaWorkflow(user)
+  const scopedCapas = canSeeAllWorkflowData ? capas : filterByUserAccess(user, capas, capa => ({ department: capa.departmentOwner || capa.department || capa.area, location: capa.location || capa.locationAspect }))
 
   useEffect(() => {
     let cancelled = false
@@ -78,8 +79,8 @@ export default function CapaTracker() {
       setAssignedNgError('')
       try {
         const client = requireSupabase()
-        const adminView = isSystemAdmin(user)
-        const auditorView = canAccessAuditModule(user)
+        const adminView = canManageDishaWorkflow(user)
+        const auditorView = canViewAuditModule(user)
         let query = client
           .from('audit_responses')
           .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, created_at, updated_at, audit_location, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, actual_closure_date, responded_by')

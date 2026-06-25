@@ -2,7 +2,7 @@ import { ArrowRight, Bell, CheckCircle2, Clock3, Plus, ShieldAlert, Target, Tren
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAudits } from '../audits/AuditContext'
-import { canAccessAuditModule, isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { canManageDishaWorkflow, canViewAuditModule, isSystemAdmin, useAuth } from '../auth/AuthContext'
 import { PageHeader, StatusBadge } from '../components/UI'
 import { requireSupabase } from '../supabaseClient'
 
@@ -166,14 +166,6 @@ function auditBelongsToUser(audit, user) {
     || [audit.auditor_name, audit.auditorName, audit.owner, audit.createdByName].some(value => normalizeText(value) && normalizeText(value) === userName)
 }
 
-function hasGroupDishaReviewAccess(user) {
-  if (!user) return false
-  const terms = ['group disha', 'group disha hsc pic', 'group disha hsc', 'disha hsc pic', 'hsc pic', 'system admin', 'super admin']
-  return matchesUserText(user.role, terms)
-    || matchesUserText(user.user_type, terms)
-    || (user.access || []).some(mapping => matchesUserText(mapping.role, terms) || matchesUserText(mapping.user_type, terms))
-}
-
 function getSimpleStatus(status, row = {}) {
   const value = normalizeText(status)
   if (!value || ['open', 'assigned', 'assigned to ng pic', 'ng identified'].includes(value)) return 'Assigned'
@@ -194,6 +186,17 @@ function getCompactStatusLabel(status) {
   if (simple === 'Planning') return 'Planning'
   if (simple === 'Closed') return 'Closed'
   return simple
+}
+
+function getProcessFlowStage(status) {
+  const simple = getSimpleStatus(status)
+  if (simple === 'Assigned') return 0
+  if (simple === 'Planning') return 1
+  if (simple === 'In Progress') return 2
+  if (simple === 'Submitted for Review') return 3
+  if (simple === 'Closed') return 5
+  if (simple === 'Reassigned') return 6
+  return 0
 }
 
 function isReviewQueueItem(item) {
@@ -259,9 +262,9 @@ export default function ActionCenter() {
   const [actionSaving, setActionSaving] = useState(false)
   const [actionMessage, setActionMessage] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
-  const adminView = isSystemAdmin(user)
-  const auditorView = canAccessAuditModule(user)
-  const reviewerView = hasGroupDishaReviewAccess(user)
+  const adminView = canManageDishaWorkflow(user)
+  const auditorView = canViewAuditModule(user)
+  const reviewerView = canManageDishaWorkflow(user)
   const expenseApproverView = isExpenseApprover(user)
 
   useEffect(() => {
@@ -408,7 +411,7 @@ export default function ActionCenter() {
     if (!adminView) tabs.push({ key: 'assigned', label: 'Assigned to Me', count: assignedCards.length })
     if (auditorView || adminView) tabs.push({ key: 'raised', label: 'Raised by Me', count: raisedCards.length })
     tabs.push({ key: 'collaboration', label: 'Collaboration', count: collaborationCards.length })
-    if (reviewerView || adminView) tabs.push({ key: 'review', label: 'Review Queue', count: reviewCards.length })
+    if (reviewerView || adminView || expenseApproverView) tabs.push({ key: 'review', label: 'Review Queue', count: reviewCards.length })
     if (expenseApproverView) tabs.push({ key: 'expense', label: 'Expense Approvals', count: hubCards.filter(item => item.expensePending).length })
     tabs.push({ key: 'completed', label: 'Completed / Closed', count: completedCards.length })
     if (adminView) tabs.push({ key: 'all', label: 'All NG Actions', count: allCards.length })
@@ -648,16 +651,35 @@ export default function ActionCenter() {
           const statusTone = item.overdue ? 'critical' : item.closed ? 'normal' : 'high'
           const statusLabel = item.overdue ? 'Overdue' : item.status
           const compactStatus = getCompactStatusLabel(item.status)
+          const processFlowStage = getProcessFlowStage(item.status)
           return <div key={item.id} className="action-row">
             <div className="action-main">
               <div className="action-row-header">
                 <StatusBadge>{compactStatus}</StatusBadge>
-                <strong>{safeJoin([item.dq, item.subQuestion])}</strong>
+                <div className="action-header-copy">
+                  <strong>{item.auditId || item.rawAuditId || 'Not available'}</strong>
+                  <span>{safeJoin([item.dq, item.subQuestion])}</span>
+                </div>
+                <div className="action-header-meta">
+                  <span>Target: {item.targetDate}</span>
+                  {item.overdue && <span className={`action-priority ${statusTone}`}>{statusLabel}</span>}
+                </div>
               </div>
-              <p className="action-question">Question: {item.question}</p>
-              <small className="action-condition">Condition: {item.condition}</small>
-              <small className="action-meta">Location: {item.location} • Department: {item.department} • Assigned PIC: {item.assignedPic} • Target Date: {item.targetDate}</small>
-              <div className={`action-priority ${statusTone}`}>{statusLabel}</div>
+              <div className="action-section-block">
+                <span className="action-section-label">Question</span>
+                <p className="action-question">Question: {item.question}</p>
+              </div>
+              <div className="action-section-block">
+                <span className="action-section-label">Condition / Gap</span>
+                <p className="action-condition">{item.condition}</p>
+              </div>
+              <div className="action-section-block">
+                <span className="action-section-label">Assignment & Action Summary</span>
+                <small className="action-meta">Location: {item.location} • Department: {item.department} • Assigned PIC: {item.assignedPic}</small>
+                <small className="action-meta">Root Cause: {item.rootCause || 'Not available'}</small>
+                <small className="action-meta">Action Plan Status: {item.reviewReady ? 'Ready for review' : item.status}</small>
+                <small className="action-meta">Closure Submitted Date: {item.actualClosureDate || 'Not available'}</small>
+              </div>
               {activeTab === 'expense' && <>
                 <small>Support Department: {item.supportDepartment || 'Not available'}</small>
                 <small>Expected Expense: {formatMoney(item.expectedExpenseAmount)}</small>
@@ -681,6 +703,17 @@ export default function ActionCenter() {
                 <div><span>Expected Expense</span><strong>{formatMoney(item.expectedExpenseAmount)}</strong></div>
                 <div><span>Action Taken</span><strong>{item.actionTaken || item.closureRemarks || 'Not available'}</strong></div>
                 <div><span>Actual Closure Date</span><strong>{item.actualClosureDate || 'Not available'}</strong></div>
+              </section>}
+              {detailNgId === item.id && <section className="action-process-flow">
+                <div className="panel-head compact-head"><div><span className="eyebrow">PROCESS FLOW</span><h2>Action journey</h2></div></div>
+                <div className="action-stepper">
+                  {['Assigned', 'Planning', 'In Progress', 'Review', 'Closed', 'Reassigned'].map((stage, index) => (
+                    <div key={stage} className={`action-step ${processFlowStage === index ? 'active' : processFlowStage > index ? 'done' : ''}`}>
+                      <b>{index + 1}</b>
+                      <span>{stage}</span>
+                    </div>
+                  ))}
+                </div>
               </section>}
               {editingNgId === item.id && <section className="form-grid wide">
                 <div className="wide audit-checklist-note"><span>Step 1 - Understand Issue: {safeJoin([item.dq, item.subQuestion])} | {item.condition} | Target: {item.targetDate}</span></div>
@@ -767,7 +800,8 @@ export default function ActionCenter() {
             <div className="action-row-actions">
               <button className="secondary-button" type="button" onClick={() => setDetailNgId(current => current === item.id ? '' : item.id)}>View Details</button>
               {canUpdate ? <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Update Action</button> : <button className="secondary-button" type="button" onClick={() => setDetailNgId(item.id)}>View Progress</button>}
-              {canReview && item.reviewQueue && <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Review</button>}
+              {canReview && item.reviewQueue && <button className="primary-button" type="button" onClick={() => reviewAction(item, 'Approve Closure')} disabled={actionSaving}>Approve Closure</button>}
+              {canReview && item.reviewQueue && <button className="secondary-button" type="button" onClick={() => reviewAction(item, 'Send Back')} disabled={actionSaving}>Send Back</button>}
               {expenseApproverView && activeTab === 'expense' && item.expensePending && <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Approve</button>}
             </div>
           </div>

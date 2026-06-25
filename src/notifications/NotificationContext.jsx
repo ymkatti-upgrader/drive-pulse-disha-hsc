@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { isInProgressAuditStatus, useAudits } from '../audits/AuditContext'
-import { getPrimaryRole, useAuth } from '../auth/AuthContext'
+import { canManageDishaWorkflow, getPrimaryRole, useAuth } from '../auth/AuthContext'
 import { useOptionalCapas } from '../capa/CapaContext'
 import { useYokoten } from '../yokoten/YokotenContext'
 
@@ -110,7 +110,9 @@ function buildNotifications({ role, audits, capas, stories }) {
   if (approvedStories.length > 0) items.push(buildNotification('YOK-APP', { priority: 'Medium', category: 'Yokoten Notifications', title: 'Yokoten Approved', detail: `${approvedStories.length} shared improvement${approvedStories.length > 1 ? 's are' : ' is'} approved for library use.`, dateTime: formatDateTime(now), timestamp: now.getTime(), actionLink: '/yokoten' }))
   if (sharedStories.length > 0) items.push(buildNotification('YOK-SHA', { priority: 'Normal', category: 'Yokoten Notifications', title: 'Yokoten Shared', detail: `${sharedStories.length} proven improvement${sharedStories.length > 1 ? 's have' : ' has'} been shared across locations.`, dateTime: formatDateTime(now), timestamp: now.getTime(), actionLink: '/yokoten' }))
 
-  const scoped = role === 'Group DISHA HSC PIC'
+  const scoped = canManageDishaWorkflow({ access: [{ role }] })
+    ? items
+    : role === 'Group DISHA HSC PIC'
     ? items.filter(item => item.category === 'Audit Notifications' || item.category === 'Verification Notifications')
     : role === 'Location Functional HOD'
       ? items.filter(item => item.category === 'Improvement Action Notifications' || item.category === 'Verification Notifications' || item.category === 'Yokoten Notifications')

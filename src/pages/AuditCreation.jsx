@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, Calendar, ChevronRight, Plus, Save, UserRound } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAudits, isInProgressAuditStatus } from '../audits/AuditContext'
-import { canAccessAuditModule, filterByUserAccess, isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { canAccessAuditModule, canManageDishaWorkflow, filterByUserAccess, isSystemAdmin, useAuth } from '../auth/AuthContext'
 import { DataRow, PageHeader, SearchBar, StatusBadge, Stepper } from '../components/UI'
 import { requireSupabase } from '../supabaseClient'
 
@@ -59,7 +59,8 @@ export default function AuditCreation() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { audits, createAudit, deleteAudit } = useAudits()
-  const scopedAudits = filterByUserAccess(user, audits, item => ({ department: item.department, location: item.location }))
+  const canSeeAllWorkflowData = canManageDishaWorkflow(user)
+  const scopedAudits = canSeeAllWorkflowData ? audits : filterByUserAccess(user, audits, item => ({ department: item.department, location: item.location }))
   const canEditAudit = canAccessAuditModule(user) || isSystemAdmin(user)
   const [auditorOptions, setAuditorOptions] = useState([])
   const [validationError, setValidationError] = useState('')

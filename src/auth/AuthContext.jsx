@@ -96,6 +96,17 @@ function normalizeAuditRole(value) {
   return role
 }
 
+function matchesAnyTerm(value, terms) {
+  const text = normalizedText(value)
+  if (!text) return false
+  return terms.some(term => text.includes(normalizedText(term)))
+}
+
+function matchesUserAccess(user, terms) {
+  return [user?.role, user?.user_type].some(value => matchesAnyTerm(value, terms))
+    || getUserAccess(user).some(item => matchesAnyTerm(item.role, terms) || matchesAnyTerm(item.user_type, terms))
+}
+
 function sanitizeUser(user) {
   if (!user) return null
   const { password, ...safeUser } = user
@@ -169,6 +180,18 @@ export function isSystemAdmin(user) {
   })
 }
 
+export function isGroupDishaHsc(user) {
+  return matchesUserAccess(user, ['group disha hsc', 'group disha hsc pic'])
+}
+
+export function canManageDishaWorkflow(user) {
+  return isGroupDishaHsc(user) || isSystemAdmin(user)
+}
+
+export function canAccessSuperAdminControls(user) {
+  return isSystemAdmin(user)
+}
+
 export function canAccessAuditModule(user) {
   return getUserAccess(user).some(item => {
     const role = normalizeAuditRole(item.role)
@@ -176,6 +199,10 @@ export function canAccessAuditModule(user) {
     return ['super admin', 'system administrator', 'group disha hsc pic', 'branch disha hsc pic', 'auditor'].includes(role)
       || ['super admin', 'system admin', 'system administrator', 'group disha hsc pic', 'branch disha hsc pic', 'auditor'].includes(userType)
   })
+}
+
+export function canViewAuditModule(user) {
+  return canAccessAuditModule(user) || isGroupDishaHsc(user)
 }
 
 function splitScopeValues(value) {

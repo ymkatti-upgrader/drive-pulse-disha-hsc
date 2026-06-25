@@ -1,6 +1,6 @@
 import { Download } from 'lucide-react'
 import { useAudits } from '../audits/AuditContext'
-import { filterByUserAccess, useAuth } from '../auth/AuthContext'
+import { canManageDishaWorkflow, filterByUserAccess, useAuth } from '../auth/AuthContext'
 import { useCapas } from '../capa/CapaContext'
 import { PageHeader, Progress, StatusBadge } from '../components/UI'
 
@@ -26,8 +26,9 @@ export default function Reports() {
   const { user } = useAuth()
   const { audits } = useAudits()
   const { capas } = useCapas()
-  const scopedAudits = filterByUserAccess(user, audits, item => ({ department: item.department, location: item.location }))
-  const scopedCapas = filterByUserAccess(user, capas, item => ({ department: item.departmentOwner || item.department || item.area, location: item.location || item.locationAspect }))
+  const canSeeAllWorkflowData = canManageDishaWorkflow(user)
+  const scopedAudits = canSeeAllWorkflowData ? audits : filterByUserAccess(user, audits, item => ({ department: item.department, location: item.location }))
+  const scopedCapas = canSeeAllWorkflowData ? capas : filterByUserAccess(user, capas, item => ({ department: item.departmentOwner || item.department || item.area, location: item.location || item.locationAspect }))
   const submittedAudits = scopedAudits.filter(item => item.status === 'Submitted')
   const compliance = averageScore(submittedAudits)
   const departmentScores = groupAuditScores(submittedAudits, 'department')

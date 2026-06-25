@@ -1,7 +1,7 @@
 import { Award, BookOpenCheck, CheckCircle2, ClipboardCheck, ShieldAlert, Target, UserCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { isInProgressAuditStatus, useAudits } from '../audits/AuditContext'
-import { filterByUserAccess, getPrimaryRole, useAuth } from '../auth/AuthContext'
+import { canManageDishaWorkflow, filterByUserAccess, getPrimaryRole, useAuth } from '../auth/AuthContext'
 import { PageHeader, Progress } from '../components/UI'
 import { useCapas } from '../capa/CapaContext'
 import { useYokoten } from '../yokoten/YokotenContext'
@@ -46,8 +46,9 @@ export default function Dashboard() {
   const { capas } = useCapas()
   const { stories } = useYokoten()
 
-  const scopedAudits = filterByUserAccess(user, audits, item => ({ department: item.department, location: item.location }))
-  const scopedCapas = filterByUserAccess(user, capas, item => ({ department: item.departmentOwner || item.department || item.area, location: item.location || item.locationAspect }))
+  const canSeeAllWorkflowData = canManageDishaWorkflow(user)
+  const scopedAudits = canSeeAllWorkflowData ? audits : filterByUserAccess(user, audits, item => ({ department: item.department, location: item.location }))
+  const scopedCapas = canSeeAllWorkflowData ? capas : filterByUserAccess(user, capas, item => ({ department: item.departmentOwner || item.department || item.area, location: item.location || item.locationAspect }))
   const activeActions = scopedCapas.filter(item => !['Closed', 'Yokoten Shared', 'Cancelled'].includes(item.status))
   const submittedAudits = scopedAudits.filter(item => item.status === 'Submitted')
   const inProgressAudits = scopedAudits.filter(item => isInProgressAuditStatus(item.status))
