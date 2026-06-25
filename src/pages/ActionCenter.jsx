@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowRight, Bell, CheckCircle2, Clock3, Filter, ShieldAl
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAudits } from '../audits/AuditContext'
-import { isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { canAccessAuditModule, isSystemAdmin, useAuth } from '../auth/AuthContext'
 import { PageHeader, StatusBadge } from '../components/UI'
 import { useNotifications } from '../notifications/NotificationContext'
 import { requireSupabase } from '../supabaseClient'
@@ -17,6 +17,25 @@ const emptyActionForm = {
   actualClosureDate: '',
   status: 'Open',
   closureEvidenceFiles: [],
+}
+
+function normalizeText(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function auditBelongsToUser(audit, user) {
+  if (!audit || !user) return false
+  const userName = normalizeText(user.employee_name || user.name || user.full_name)
+  return [audit.created_by, audit.createdBy, audit.auditor_id, audit.auditorId, audit.auditor_user_id, audit.auditorUserId].some(value => value && value === user.id)
+    || [audit.auditor_name, audit.auditorName, audit.owner, audit.createdByName].some(value => normalizeText(value) && normalizeText(value) === userName)
+}
+
+function responseBelongsToPic(item, user) {
+  return item.pic_for_ng_user_id === user?.id || (user?.mobile_no && item.pic_for_ng_mobile === user.mobile_no)
+}
+
+function responseBelongsToAuditor(item, audit, user) {
+  return item.responded_by === user?.id || auditBelongsToUser(audit, user)
 }
 
 function categoryTone(category) {
@@ -61,6 +80,7 @@ export default function ActionCenter() {
   const [actionSaving, setActionSaving] = useState(false)
   const [actionMessage, setActionMessage] = useState('')
   const [refreshAssignedNg, setRefreshAssignedNg] = useState(0)
+  const [detailNgId, setDetailNgId] = useState('')
 
   const filtered = useMemo(() => {
     const now = new Date()
@@ -93,17 +113,17 @@ export default function ActionCenter() {
       }
 
       setAssignedLoading(true)
-      setAssignedError('')
-      try {
-        const client = requireSupabase()
-        const adminView = isSystemAdmin(user)
-        let query = client
-          .from('audit_responses')
-          .select('id, audit_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, updated_at, audit_location, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date')
-          .eq('result', 'NG')
-          .not('status', 'in', '("Closed","Completed","closed","completed")')
+        setAssignedError('')
+        try {
+          const client = requireSupabase()
+          const adminView = isSystemAdmin(user)
+          const auditorView = canAccessAuditModule(user)
+          let query = client
+            .from('audit_responses')
+            .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, updated_at, audit_location, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by')
+            .eq('result', 'NG')
 
-        if (!adminView) {
+        if (!adminView && !auditorView) {
           const filters = [
             `pic_for_ng_user_id.eq.${user.id}`,
             user.mobile_no ? `pic_for_ng_mobile.eq.${user.mobile_no}` : '',
@@ -114,7 +134,13 @@ export default function ActionCenter() {
         const { data, error } = await query
 
         if (error) throw error
-        if (!cancelled) setAssignedNgItems(data || [])
+        if (!cancelled) {
+          const scopedRows = adminView ? data || [] : (data || []).filter(item => {
+            const audit = audits.find(auditItem => auditItem.id === item.audit_id)
+            return responseBelongsToPic(item, user) || (auditorView && responseBelongsToAuditor(item, audit, user))
+          })
+          setAssignedNgItems(scopedRows)
+        }
       } catch (error) {
         if (!cancelled) {
           setAssignedNgItems([])
@@ -129,7 +155,7 @@ export default function ActionCenter() {
     return () => {
       cancelled = true
     }
-  }, [user, refreshAssignedNg])
+  }, [user, audits, refreshAssignedNg])
 
   const assignedNgCards = useMemo(() => assignedNgItems.map(item => ({
     id: item.id,
@@ -150,6 +176,7 @@ export default function ActionCenter() {
     closureRemarks: item.closure_remarks || '',
     closureEvidenceFiles: Array.isArray(item.closure_evidence_files) ? item.closure_evidence_files : [],
     actualClosureDate: item.actual_closure_date || '',
+    respondedBy: item.responded_by || '',
   })), [assignedNgItems, audits])
 
   function openNotification(item) {
@@ -270,7 +297,19 @@ export default function ActionCenter() {
             <small>{item.question}</small>
             <small>{item.condition}</small>
             <small>{item.closingDate}</small>
-            {editingNgId === item.id && <div className="form-grid wide">
+            {detailNgId === item.id && <section className="capa-detail-fields">
+              <div><span>Audit ID</span><strong>{item.auditId}</strong></div>
+              <div><span>Location</span><strong>{item.location}</strong></div>
+              <div><span>Department</span><strong>{item.department}</strong></div>
+              <div><span>DQ Number</span><strong>{item.dq}</strong></div>
+              <div><span>Sub-question</span><strong>Q{item.subQuestion}</strong></div>
+              <div><span>Assigned PIC</span><strong>{item.pic}</strong></div>
+              <div><span>Current Condition / Gap Observed</span><strong>{item.condition}</strong></div>
+              <div><span>Tentative Closing Date</span><strong>{item.closingDate}</strong></div>
+              <div><span>Action Plan</span><strong>{item.correctiveActionPlan || '-'}</strong></div>
+              <div><span>Action Status</span><strong>{item.status}</strong></div>
+            </section>}
+            {editingNgId === item.id && <section className="form-grid wide">
               <label className="wide">Root Cause
                 <textarea rows="2" value={actionForm.rootCause} onChange={event => updateActionForm('rootCause', event.target.value)} placeholder="Enter root cause" />
               </label>
@@ -308,10 +347,10 @@ export default function ActionCenter() {
                   <button className="primary-button" type="button" onClick={() => saveNgAction('Completed')} disabled={actionSaving}>Submit Completed</button>
                 </div>
               </div>
-            </div>}
+            </section>}
           </div>
           <div>
-            <button className="secondary-button" type="button" onClick={() => navigate(`/audits/${item.auditId}/conduct${item.dq !== '-' ? `?dq=${encodeURIComponent(item.dq)}` : ''}`)}>Open Audit</button>
+            <button className="secondary-button" type="button" onClick={() => setDetailNgId(current => current === item.id ? '' : item.id)}>View Details</button>
             <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Update Action</button>
           </div>
         </div>)}
