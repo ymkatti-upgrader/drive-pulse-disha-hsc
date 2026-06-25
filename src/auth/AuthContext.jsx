@@ -212,6 +212,7 @@ export function AuthProvider({ children }) {
 
   function persistSession(nextUser) {
     const safeUser = sanitizeUser(nextUser)
+    clearSessionStorage()
     localStorage.setItem(AUTH_KEY, JSON.stringify(safeUser))
     localStorage.removeItem(LEGACY_AUTH_KEY)
     setUser(safeUser)

@@ -236,6 +236,7 @@ function buildDraftPayload(items, auditId, respondedBy) {
     pic_for_ng_name: normalizeDraftValue(item.picForNgName || item.picForNg || null),
     pic_for_ng_mobile: normalizeDraftValue(item.picForNgMobile || null),
     pic_for_ng: normalizeDraftValue(item.picForNgName || item.picForNg || null),
+    status: item.result === 'NG' ? 'Open' : null,
     tentative_closing_date: getTentativeClosingDate(item) || null,
     evidence_files: Array.isArray(item.evidenceFiles) ? item.evidenceFiles : [],
   })).map(record => Object.fromEntries(Object.entries(record).map(([key, value]) => [key, value === undefined ? null : value])))
@@ -257,6 +258,7 @@ function mergeDraftRows(items, rows) {
       picForNgUserId: row.pic_for_ng_user_id || '',
       picForNgName: row.pic_for_ng_name || row.pic_for_ng || '',
       picForNgMobile: row.pic_for_ng_mobile || '',
+      status: row.status || '',
       tentative_closing_date: normalizeDraftDate(row.tentative_closing_date),
       evidenceFiles: Array.isArray(row.evidence_files) ? row.evidence_files : [],
       evidenceUploaded: Array.isArray(row.evidence_files) ? row.evidence_files.length > 0 : Boolean(item.evidenceUploaded),
@@ -553,7 +555,7 @@ export default function ConductAudit() {
         const client = requireSupabase()
         const { data, error: loadError } = await client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, tentative_closing_date, evidence_files, responded_by, updated_at')
+          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, status, tentative_closing_date, evidence_files, responded_by, updated_at')
           .eq('audit_id', auditId)
 
         if (loadError) throw loadError

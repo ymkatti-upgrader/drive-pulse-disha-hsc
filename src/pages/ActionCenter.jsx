@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowRight, Bell, CheckCircle2, Clock3, Filter, ShieldAl
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAudits } from '../audits/AuditContext'
-import { useAuth } from '../auth/AuthContext'
+import { isSystemAdmin, useAuth } from '../auth/AuthContext'
 import { PageHeader, StatusBadge } from '../components/UI'
 import { useNotifications } from '../notifications/NotificationContext'
 import { requireSupabase } from '../supabaseClient'
@@ -81,15 +81,22 @@ export default function ActionCenter() {
       setAssignedError('')
       try {
         const client = requireSupabase()
-        const filters = [
-          `pic_for_ng_user_id.eq.${user.id}`,
-          user.mobile_no ? `pic_for_ng_mobile.eq.${user.mobile_no}` : '',
-        ].filter(Boolean).join(',')
-        const { data, error } = await client
+        const adminView = isSystemAdmin(user)
+        let query = client
           .from('audit_responses')
-          .select('id, audit_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, updated_at, audit_location')
+          .select('id, audit_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, updated_at, audit_location')
           .eq('result', 'NG')
-          .or(filters || `pic_for_ng_user_id.eq.${user.id}`)
+          .not('status', 'in', '("Closed","Completed","closed","completed")')
+
+        if (!adminView) {
+          const filters = [
+            `pic_for_ng_user_id.eq.${user.id}`,
+            user.mobile_no ? `pic_for_ng_mobile.eq.${user.mobile_no}` : '',
+          ].filter(Boolean).join(',')
+          query = query.or(filters || `pic_for_ng_user_id.eq.${user.id}`)
+        }
+
+        const { data, error } = await query
 
         if (error) throw error
         if (!cancelled) setAssignedNgItems(data || [])
@@ -107,7 +114,7 @@ export default function ActionCenter() {
     return () => {
       cancelled = true
     }
-  }, [user?.id, user?.mobile_no, user?.employee_name])
+  }, [user])
 
   const assignedNgCards = useMemo(() => assignedNgItems.map(item => ({
     id: item.id,
@@ -120,7 +127,7 @@ export default function ActionCenter() {
     condition: item.current_condition_observed || '-',
     closingDate: item.tentative_closing_date || '-',
     pic: item.pic_for_ng_name || item.pic_for_ng_user_id || '-',
-    status: item.result || 'NG',
+    status: item.status || 'Open',
   })), [assignedNgItems])
 
   function openNotification(item) {
