@@ -9,6 +9,9 @@ import { requireSupabase } from '../supabaseClient'
 const causeCategories = ['Manpower', 'Method', 'Machine / Equipment', 'Material', 'Environment', 'Measurement / Monitoring', 'Others']
 const actionStatuses = ['Open', 'In Progress', 'Completed']
 const supportStatuses = ['Pending', 'In Progress', 'Completed']
+const supportDepartments = ['Sales', 'Service', 'U-Trust', 'VAS', 'Accessories', 'HR', 'Admin', 'Finance', 'Accounts', 'CRE / Customer Relations', 'Body & Paint', 'Parts', 'IT', 'Others']
+const expenseCategories = ['Repair', 'Replacement', 'Facility Improvement', 'Tools / Equipment', 'Vendor Support', 'Customer Support', 'Safety / Compliance', 'Others']
+const CEO_EXPENSE_APPROVAL_THRESHOLD = 10000
 
 const emptyActionForm = {
   causeCategory: '',
@@ -24,6 +27,10 @@ const emptyActionForm = {
   supportRequired: '',
   supportRemarks: '',
   supportStatus: 'Pending',
+  monetarySupportRequired: false,
+  expectedExpenseAmount: '',
+  expensePurpose: '',
+  expenseCategory: '',
   reviewComments: '',
   extensionRequestedDate: '',
   extensionReason: '',
@@ -88,6 +95,35 @@ function hasRole(user, terms) {
   })
 }
 
+function isExpenseApprover(user) {
+  return isSystemAdmin(user) || hasRole(user, ['group disha', 'group functional hod', 'functional hod', 'ceo'])
+}
+
+function getExpenseApprovalRole(user) {
+  if (isSystemAdmin(user)) return 'System Admin'
+  if (hasRole(user, ['ceo'])) return 'CEO'
+  if (hasRole(user, ['group functional hod', 'functional hod'])) return 'Group Functional HOD'
+  return 'Group DISHA HSC PIC'
+}
+
+function expenseStatus(row = {}) {
+  const text = cleanText(row.expense_approval_status)
+  if (text) return text
+  return row.monetary_support_required ? 'Pending Approval' : 'Not Required'
+}
+
+function formatMoney(value) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount <= 0) return 'Not available'
+  return `INR ${amount.toLocaleString('en-IN')}`
+}
+
+function personOptionLabel(person) {
+  const name = cleanDisplayValue(person.employee_name || person.name || person.full_name || person.mobile_no)
+  const meta = safeJoin([person.department, person.location, person.mobile_no], ' - ')
+  return meta ? `${name} - ${meta}` : name
+}
+
 function auditBelongsToUser(audit, user) {
   if (!audit || !user) return false
   const userName = normalizeText(user.employee_name || user.name || user.full_name)
@@ -144,13 +180,14 @@ export default function ActionCenter() {
   const adminView = isSystemAdmin(user)
   const auditorView = canAccessAuditModule(user)
   const reviewerView = hasRole(user, ['group disha', 'group disha hsc pic', 'system admin', 'super admin'])
+  const expenseApproverView = isExpenseApprover(user)
 
   useEffect(() => {
     let cancelled = false
     async function loadPeople() {
       try {
         const client = requireSupabase()
-        const { data, error: loadError } = await client.from('app_users').select('id, employee_name, mobile_no, active').eq('active', true)
+        const { data, error: loadError } = await client.from('app_users').select('*').eq('active', true)
         if (loadError) throw loadError
         if (!cancelled) setPeople(data || [])
       } catch {
@@ -176,7 +213,7 @@ export default function ActionCenter() {
         const client = requireSupabase()
         let query = client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, root_cause, cause_category, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, completed_at, completed_by, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, extension_request_status, extension_requested_date, extension_reason, reviewed_by, reviewed_at, review_comments, responded_by, audit_location')
+          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, root_cause, cause_category, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, completed_at, completed_by, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_status, group_disha_approval_status, functional_hod_approval_status, ceo_approval_required, ceo_approval_status, extension_request_status, extension_requested_date, extension_reason, reviewed_by, reviewed_at, review_comments, responded_by, audit_location')
           .eq('result', 'NG')
 
         if (!adminView && !auditorView && !reviewerView) {
@@ -193,7 +230,7 @@ export default function ActionCenter() {
         if (fetchError) throw fetchError
 
         if (!cancelled) {
-          const scopedRows = adminView || reviewerView ? data || [] : (data || []).filter(item => {
+          const scopedRows = adminView || reviewerView || expenseApproverView ? data || [] : (data || []).filter(item => {
             const audit = audits.find(auditItem => auditItem.id === item.audit_id)
             const assigned = item.pic_for_ng_user_id === user.id || (user.mobile_no && item.pic_for_ng_mobile === user.mobile_no)
             const collaborator = item.collaborator_user_id === user.id || (user.mobile_no && item.collaborator_mobile === user.mobile_no)
@@ -213,7 +250,7 @@ export default function ActionCenter() {
 
     loadNgItems()
     return () => { cancelled = true }
-  }, [adminView, auditorView, reviewerView, user, audits, refreshKey])
+  }, [adminView, auditorView, reviewerView, expenseApproverView, user, audits, refreshKey])
 
   const hubCards = useMemo(() => ngItems.map(item => {
     const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
@@ -253,6 +290,15 @@ export default function ActionCenter() {
       supportRequired: cleanText(item.support_required),
       supportRemarks: cleanText(item.support_remarks),
       supportStatus: cleanText(item.support_status) || 'Pending',
+      monetarySupportRequired: Boolean(item.monetary_support_required),
+      expectedExpenseAmount: item.expected_expense_amount || '',
+      expensePurpose: cleanText(item.expense_purpose),
+      expenseCategory: cleanText(item.expense_category),
+      expenseApprovalStatus: expenseStatus(item),
+      groupDishaApprovalStatus: cleanText(item.group_disha_approval_status) || 'Pending',
+      functionalHodApprovalStatus: cleanText(item.functional_hod_approval_status) || 'Pending',
+      ceoApprovalRequired: Boolean(item.ceo_approval_required),
+      ceoApprovalStatus: cleanText(item.ceo_approval_status) || 'Pending',
       extensionRequestStatus: cleanText(item.extension_request_status),
       extensionRequestedDate: formatDate(item.extension_requested_date),
       extensionReason: cleanText(item.extension_reason),
@@ -261,7 +307,7 @@ export default function ActionCenter() {
       isCollaborator: item.collaborator_user_id === user?.id || (user?.mobile_no && item.collaborator_mobile === user.mobile_no),
       isRaisedByMe: item.responded_by === user?.id || auditBelongsToUser(audit, user),
     }
-    return { ...card, overdue: isOverdue(card), closed: status === 'Closed', reviewReady: status === 'Submitted for Review' || cleanText(item.extension_request_status) === 'Pending' }
+    return { ...card, overdue: isOverdue(card), closed: status === 'Closed', reviewReady: status === 'Submitted for Review' || cleanText(item.extension_request_status) === 'Pending', expensePending: expenseStatus(item) === 'Pending Approval' }
   }), [ngItems, audits, user])
 
   const visibleTabs = useMemo(() => {
@@ -270,10 +316,11 @@ export default function ActionCenter() {
     if (auditorView || adminView) tabs.push({ key: 'raised', label: 'Raised by Me', count: hubCards.filter(item => item.isRaisedByMe).length })
     tabs.push({ key: 'collaboration', label: 'Collaboration', count: hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)).length })
     if (reviewerView || adminView) tabs.push({ key: 'review', label: 'Review Queue', count: hubCards.filter(item => item.reviewReady).length })
+    if (expenseApproverView) tabs.push({ key: 'expense', label: 'Expense Approvals', count: hubCards.filter(item => item.expensePending).length })
     tabs.push({ key: 'completed', label: 'Completed / Closed', count: hubCards.filter(item => item.closed).length })
     if (adminView) tabs.push({ key: 'all', label: 'All NG Actions', count: hubCards.length })
     return tabs
-  }, [adminView, auditorView, reviewerView, hubCards])
+  }, [adminView, auditorView, reviewerView, expenseApproverView, hubCards])
 
   useEffect(() => {
     if (visibleTabs.length && !visibleTabs.some(tab => tab.key === activeTab)) setActiveTab(visibleTabs[0].key)
@@ -283,10 +330,18 @@ export default function ActionCenter() {
     if (activeTab === 'raised') return hubCards.filter(item => item.isRaisedByMe)
     if (activeTab === 'collaboration') return hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired))
     if (activeTab === 'review') return hubCards.filter(item => item.reviewReady)
+    if (activeTab === 'expense') return hubCards.filter(item => item.expensePending)
     if (activeTab === 'completed') return hubCards.filter(item => item.closed)
     if (activeTab === 'all') return hubCards
     return hubCards.filter(item => (adminView || item.isAssigned) && !item.closed)
   }, [activeTab, adminView, hubCards])
+
+  const filteredPeople = useMemo(() => {
+    const selectedDepartment = normalizeText(actionForm.supportDepartment)
+    if (!selectedDepartment) return people
+    const filtered = people.filter(person => normalizeText(person.department || person.department_name || person.departmentOwner).includes(selectedDepartment))
+    return filtered.length ? filtered : people
+  }, [people, actionForm.supportDepartment])
 
   function openActionForm(item) {
     if (!adminView && !item.isAssigned && !item.isCollaborator) {
@@ -310,6 +365,10 @@ export default function ActionCenter() {
       supportRequired: item.supportRequired || '',
       supportRemarks: item.supportRemarks || '',
       supportStatus: item.supportStatus || 'Pending',
+      monetarySupportRequired: item.monetarySupportRequired || false,
+      expectedExpenseAmount: item.expectedExpenseAmount || '',
+      expensePurpose: item.expensePurpose || '',
+      expenseCategory: item.expenseCategory || '',
       reviewComments: item.reviewComments || '',
       extensionRequestedDate: item.extensionRequestedDate || '',
       extensionReason: item.extensionReason || '',
@@ -362,6 +421,7 @@ export default function ActionCenter() {
     }
 
     const collaborator = people.find(person => person.id === actionForm.collaboratorUserId) || null
+    const expectedExpenseAmount = Number(actionForm.expectedExpenseAmount || 0)
     setActionSaving(true)
     setActionMessage('')
     try {
@@ -385,6 +445,11 @@ export default function ActionCenter() {
         p_support_required: actionForm.supportRequired || null,
         p_support_remarks: actionForm.supportRemarks || null,
         p_support_status: actionForm.supportStatus || null,
+        p_monetary_support_required: Boolean(actionForm.monetarySupportRequired),
+        p_expected_expense_amount: Number.isFinite(expectedExpenseAmount) && expectedExpenseAmount > 0 ? expectedExpenseAmount : null,
+        p_expense_purpose: actionForm.expensePurpose || null,
+        p_expense_category: actionForm.expenseCategory || null,
+        p_ceo_approval_required: Boolean(actionForm.monetarySupportRequired && expectedExpenseAmount >= CEO_EXPENSE_APPROVAL_THRESHOLD),
         p_extension_requested_date: actionForm.extensionRequestedDate || null,
         p_extension_reason: actionForm.extensionReason || null,
       })
@@ -394,6 +459,35 @@ export default function ActionCenter() {
       if (nextStatus === 'Submitted for Review') setEditingNgId('')
     } catch (saveError) {
       setActionMessage(saveError?.message || 'Unable to update action.')
+    } finally {
+      setActionSaving(false)
+    }
+  }
+
+  async function approveExpense(item, decision) {
+    const comments = actionForm.reviewComments || item.reviewComments || ''
+    if (decision === 'Rejected' && !comments.trim()) {
+      setActionMessage('Comments are required to reject an expense request.')
+      setEditingNgId(item.id)
+      return
+    }
+    setActionSaving(true)
+    setActionMessage('')
+    try {
+      const client = requireSupabase()
+      const { error: approvalError } = await client.rpc('approve_expense_request', {
+        p_response_id: item.id,
+        p_user_id: user.id,
+        p_role: getExpenseApprovalRole(user),
+        p_decision: decision,
+        p_comments: comments || null,
+      })
+      if (approvalError) throw approvalError
+      setActionMessage(decision === 'Approved' ? 'Expense approved' : 'Expense rejected')
+      setEditingNgId('')
+      setRefreshKey(current => current + 1)
+    } catch (approvalError) {
+      setActionMessage(approvalError?.message || 'Unable to update expense approval.')
     } finally {
       setActionSaving(false)
     }
@@ -428,12 +522,13 @@ export default function ActionCenter() {
   }
 
   return <div className="action-center-page">
-    <PageHeader eyebrow="DISHA ACTION HUB" title="Disha Action Hub" description="Simple journey: Understand Issue -> Root Cause -> Action Plan -> Evidence -> Submit for Review." action={<button className="secondary-button" onClick={() => navigate('/dashboard')}><TrendingUp size={17} /> Back to Dashboard</button>} />
+    <PageHeader eyebrow="DISHA ACTION HUB" title="Disha Action Hub" description="Simple journey: Understand Issue -> Root Cause -> Support / Collaboration -> Action Plan -> Evidence & Submit." action={<button className="secondary-button" onClick={() => navigate('/dashboard')}><TrendingUp size={17} /> Back to Dashboard</button>} />
 
     <section className="action-summary-grid">
       <ActionCard title="Assigned to Me" count={hubCards.filter(item => item.isAssigned && !item.closed).length} meta="My open actions" tone="blue" icon={Target} onClick={() => setActiveTab('assigned')} />
       <ActionCard title="Collaboration" count={hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)).length} meta="Support requested" tone="amber" icon={Clock3} onClick={() => setActiveTab('collaboration')} />
       <ActionCard title="Review Queue" count={hubCards.filter(item => item.reviewReady).length} meta="Submitted or extension" tone="green" icon={CheckCircle2} onClick={() => setActiveTab('review')} />
+      {expenseApproverView && <ActionCard title="Expense Approvals" count={hubCards.filter(item => item.expensePending).length} meta="Pending expense requests" tone="amber" icon={ShieldAlert} onClick={() => setActiveTab('expense')} />}
       <ActionCard title="Completed / Closed" count={hubCards.filter(item => item.closed).length} meta="Closed cases" tone="blue" icon={ShieldAlert} onClick={() => setActiveTab('completed')} />
       {adminView && <ActionCard title="All NG Actions" count={hubCards.length} meta="Admin view" tone="blue" icon={Bell} onClick={() => setActiveTab('all')} />}
     </section>
@@ -455,6 +550,12 @@ export default function ActionCenter() {
               <small>Assigned PIC: {item.assignedPic}</small>
               <small>Target Date: {item.targetDate}</small>
               <small>Condition: {item.condition}</small>
+              {activeTab === 'expense' && <>
+                <small>Support Department: {item.supportDepartment || 'Not available'}</small>
+                <small>Expected Expense: {formatMoney(item.expectedExpenseAmount)}</small>
+                <small>Expense Purpose: {item.expensePurpose || 'Not available'}</small>
+                <small>Expense Approval: {item.expenseApprovalStatus}</small>
+              </>}
               {detailNgId === item.id && <section className="capa-detail-fields">
                 <div><span>Audit</span><strong>{item.auditId}</strong></div>
                 <div><span>Location</span><strong>{item.location}</strong></div>
@@ -466,6 +567,10 @@ export default function ActionCenter() {
                 <div><span>Target Date</span><strong>{item.targetDate}</strong></div>
                 <div><span>Cause Category</span><strong>{item.causeCategory || 'Not available'}</strong></div>
                 <div><span>Root Cause</span><strong>{item.rootCause || 'Not available'}</strong></div>
+                <div><span>Support Department</span><strong>{item.supportDepartment || 'Not available'}</strong></div>
+                <div><span>Support Status</span><strong>{item.supportStatus || 'Not available'}</strong></div>
+                <div><span>Expense Approval</span><strong>{item.expenseApprovalStatus}</strong></div>
+                <div><span>Expected Expense</span><strong>{formatMoney(item.expectedExpenseAmount)}</strong></div>
                 <div><span>Action Taken</span><strong>{item.actionTaken || item.closureRemarks || 'Not available'}</strong></div>
                 <div><span>Actual Closure Date</span><strong>{item.actualClosureDate || 'Not available'}</strong></div>
               </section>}
@@ -481,7 +586,46 @@ export default function ActionCenter() {
                   <textarea rows="3" value={actionForm.rootCause} onChange={event => updateActionForm('rootCause', event.target.value)} placeholder="Enter confirmed root cause" />
                 </label>
                 <div className="wide">
-                  <div className="panel-head"><div><span className="eyebrow">STEP 3</span><h2>Action Plan</h2></div><button className="secondary-button" type="button" onClick={addPlanRow}><Plus size={14} /> Add Action</button></div>
+                  <div className="panel-head compact-head"><div><span className="eyebrow">STEP 3</span><h2>Support / Collaboration Requirement</h2></div></div>
+                  <label className="inline-checkbox"><input type="checkbox" checked={actionForm.collaborationRequired} onChange={event => updateActionForm('collaborationRequired', event.target.checked)} /> Need support from another department?</label>
+                </div>
+                {actionForm.collaborationRequired && <>
+                  <label>Support Department
+                    <select value={actionForm.supportDepartment} onChange={event => updateActionForm('supportDepartment', event.target.value)}>
+                      <option value="">Select department</option>
+                      {supportDepartments.map(department => <option key={department}>{department}</option>)}
+                    </select>
+                  </label>
+                  <label>Support PIC
+                    <select value={actionForm.collaboratorUserId} onChange={event => updateActionForm('collaboratorUserId', event.target.value)}>
+                      <option value="">Select support PIC</option>
+                      {filteredPeople.map(person => <option key={person.id} value={person.id}>{personOptionLabel(person)}</option>)}
+                    </select>
+                  </label>
+                  <label className="wide">Support Required<textarea rows="2" value={actionForm.supportRequired} onChange={event => updateActionForm('supportRequired', event.target.value)} placeholder="Describe what support is required from this department/PIC." /></label>
+                  {(item.isCollaborator || adminView) && <>
+                    <label className="wide">Support Remarks<textarea rows="2" value={actionForm.supportRemarks} onChange={event => updateActionForm('supportRemarks', event.target.value)} /></label>
+                    <label>Support Status<select value={actionForm.supportStatus} onChange={event => updateActionForm('supportStatus', event.target.value)}>{supportStatuses.map(status => <option key={status}>{status}</option>)}</select></label>
+                  </>}
+                </>}
+                <div className="wide">
+                  <label className="inline-checkbox"><input type="checkbox" checked={actionForm.monetarySupportRequired} onChange={event => updateActionForm('monetarySupportRequired', event.target.checked)} /> Monetary Support Required?</label>
+                  {actionForm.monetarySupportRequired && <div className="form-grid wide expense-grid">
+                    <label>Expected Expense Amount
+                      <span className="currency-input"><b>INR</b><input type="number" min="0" value={actionForm.expectedExpenseAmount} onChange={event => updateActionForm('expectedExpenseAmount', event.target.value)} /></span>
+                    </label>
+                    <label>Expense Category
+                      <select value={actionForm.expenseCategory} onChange={event => updateActionForm('expenseCategory', event.target.value)}>
+                        <option value="">Select category</option>
+                        {expenseCategories.map(category => <option key={category}>{category}</option>)}
+                      </select>
+                    </label>
+                    <label className="wide">Expense Purpose<textarea rows="2" value={actionForm.expensePurpose} onChange={event => updateActionForm('expensePurpose', event.target.value)} /></label>
+                    <div className="wide approval-status-line"><span>Expense Approval Status</span><StatusBadge>{item.expenseApprovalStatus || 'Not Required'}</StatusBadge></div>
+                  </div>}
+                </div>
+                <div className="wide">
+                  <div className="panel-head"><div><span className="eyebrow">STEP 4</span><h2>Action Plan</h2></div><button className="secondary-button" type="button" onClick={addPlanRow}><Plus size={14} /> Add Action</button></div>
                   {actionForm.actionPlanItems.length === 0 ? <div className="action-empty">No action rows yet.</div> : actionForm.actionPlanItems.map((row, index) => <div className="form-grid wide" key={row.id || index}>
                     <label className="wide">Action<input value={row.action || ''} onChange={event => updatePlanRow(index, 'action', event.target.value)} /></label>
                     <label>Responsible Person<input value={row.responsiblePerson || ''} onChange={event => updatePlanRow(index, 'responsiblePerson', event.target.value)} /></label>
@@ -490,21 +634,11 @@ export default function ActionCenter() {
                     <button className="secondary-button" type="button" onClick={() => removePlanRow(index)}><X size={14} /> Remove</button>
                   </div>)}
                 </div>
-                <label className="wide">Step 4 - Action Taken / Closure Remarks
+                <label className="wide">Step 5 - Action Taken / Closure Remarks
                   <textarea rows="3" value={actionForm.actionTaken} onChange={event => updateActionForm('actionTaken', event.target.value)} />
                 </label>
                 <label>Actual Closure Date<input type="date" value={actionForm.actualClosureDate} onChange={event => updateActionForm('actualClosureDate', event.target.value)} /></label>
                 <label>Evidence Upload<input type="file" multiple onChange={handleClosureEvidence} /></label>
-                <label className="wide"><input type="checkbox" checked={actionForm.collaborationRequired} onChange={event => updateActionForm('collaborationRequired', event.target.checked)} /> Need support from another department?</label>
-                {actionForm.collaborationRequired && <>
-                  <label>Support Department<input value={actionForm.supportDepartment} onChange={event => updateActionForm('supportDepartment', event.target.value)} /></label>
-                  <label>Support PIC<select value={actionForm.collaboratorUserId} onChange={event => updateActionForm('collaboratorUserId', event.target.value)}><option value="">Select support PIC</option>{people.map(person => <option key={person.id} value={person.id}>{person.employee_name}</option>)}</select></label>
-                  <label className="wide">Support Required<textarea rows="2" value={actionForm.supportRequired} onChange={event => updateActionForm('supportRequired', event.target.value)} /></label>
-                  {(item.isCollaborator || adminView) && <>
-                    <label className="wide">Support Remarks<textarea rows="2" value={actionForm.supportRemarks} onChange={event => updateActionForm('supportRemarks', event.target.value)} /></label>
-                    <label>Support Status<select value={actionForm.supportStatus} onChange={event => updateActionForm('supportStatus', event.target.value)}>{supportStatuses.map(status => <option key={status}>{status}</option>)}</select></label>
-                  </>}
-                </>}
                 <label>Request Extension Date<input type="date" value={actionForm.extensionRequestedDate} onChange={event => updateActionForm('extensionRequestedDate', event.target.value)} /></label>
                 <label className="wide">Extension Reason<textarea rows="2" value={actionForm.extensionReason} onChange={event => updateActionForm('extensionReason', event.target.value)} /></label>
                 {(canReview || item.reviewReady) && <label className="wide">Review Comments<textarea rows="2" value={actionForm.reviewComments} onChange={event => updateActionForm('reviewComments', event.target.value)} /></label>}
@@ -516,6 +650,8 @@ export default function ActionCenter() {
                     {canUpdate && <button className="primary-button" type="button" onClick={() => saveAction('Submitted for Review')} disabled={actionSaving}>Submit for Review</button>}
                     {canReview && item.reviewReady && <button className="primary-button" type="button" onClick={() => reviewAction(item, 'Approve Closure')} disabled={actionSaving}>Approve Closure</button>}
                     {canReview && item.reviewReady && <button className="secondary-button" type="button" onClick={() => reviewAction(item, 'Send Back')} disabled={actionSaving}>Send Back</button>}
+                    {expenseApproverView && activeTab === 'expense' && item.expensePending && <button className="primary-button" type="button" onClick={() => approveExpense(item, 'Approved')} disabled={actionSaving}>Approve Expense</button>}
+                    {expenseApproverView && activeTab === 'expense' && item.expensePending && <button className="secondary-button" type="button" onClick={() => approveExpense(item, 'Rejected')} disabled={actionSaving}>Reject Expense</button>}
                   </div>
                 </div>
               </section>}
@@ -524,6 +660,7 @@ export default function ActionCenter() {
               <button className="secondary-button" type="button" onClick={() => setDetailNgId(current => current === item.id ? '' : item.id)}>View Details</button>
               {canUpdate ? <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Update Action</button> : <button className="secondary-button" type="button" onClick={() => setDetailNgId(item.id)}>View Progress</button>}
               {canReview && item.reviewReady && <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Review</button>}
+              {expenseApproverView && activeTab === 'expense' && item.expensePending && <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Approve</button>}
             </div>
           </div>
         })}

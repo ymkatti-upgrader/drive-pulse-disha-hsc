@@ -1578,9 +1578,27 @@ body{font-size:14px}
 .capa-detail-fields span{font-size:11px}
 .capa-detail-fields strong,.capa-detail-fields p{font-size:13px;line-height:1.4}
 .ai-sensei-card,.ai-sensei-history-card,.ai-sensei-overlay,.five-why-card{display:none !important}
+.inline-checkbox{display:inline-flex !important;align-items:center;gap:7px;width:auto !important;grid-column:1/-1;font-size:13px !important;font-weight:700;color:#344054;margin:0}
+.inline-checkbox input[type="checkbox"]{width:15px !important;height:15px !important;min-height:0 !important;padding:0 !important;margin:0 !important;accent-color:#eb0a1e;box-shadow:none !important;flex:none}
+.compact-head{margin-bottom:8px}
+.expense-grid{margin-top:10px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:12px}
+.currency-input{display:grid;grid-template-columns:48px 1fr;align-items:center;margin-top:6px;border:1px solid #cfd8e3;border-radius:7px;background:#fff;overflow:hidden}
+.currency-input b{display:grid;place-items:center;height:100%;background:#f1f5f9;color:#475467;font-size:12px;border-right:1px solid #dbe2ea}
+.currency-input input{border:0 !important;margin:0 !important;border-radius:0 !important}
+.approval-status-line{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#344054}
+.leadership-kpi{min-height:118px !important;padding:15px !important}
+.leadership-kpi>div>span{font-size:13px !important}
+.leadership-kpi>div>strong{font-size:28px !important;line-height:1.1 !important;word-break:break-word}
+.leadership-kpi>div>small{font-size:12px !important}
+.leadership-kpi-icon{width:38px !important;height:38px !important}
+.exec-panel .panel-head h2{font-size:20px !important;line-height:1.2}
+.exec-panel .panel-head p{font-size:12px !important;color:#667085;margin:4px 0 0}
+.role-empty{font-size:18px !important;line-height:1.25}
+.stat-card strong,.role-metric strong,.mgmt-metric strong,.admin-summary strong{font-size:28px !important}
 
 @media(max-width:760px){
   .content{padding:16px 14px 72px}
   .action-row{grid-template-columns:1fr}
   .action-row>div:last-child{display:flex;gap:8px;flex-wrap:wrap}
+  .leadership-kpi>div>strong{font-size:24px !important}
 }

@@ -6,7 +6,7 @@ import { PageHeader, Progress } from '../components/UI'
 import { useCapas } from '../capa/CapaContext'
 import { useYokoten } from '../yokoten/YokotenContext'
 
-const emptyMessage = 'No data available yet.'
+const emptyMessage = 'No data yet'
 
 function averageScore(rows) {
   const scored = rows.filter(item => Number.isFinite(Number(item.score)))
@@ -23,7 +23,7 @@ function Kpi({ label, value, meta, icon: Icon, tone, onClick }) {
 
 function EmptyPanel({ title }) {
   return <section className="card exec-panel">
-    <div className="panel-head"><div><span className="eyebrow">{title}</span><h2>{emptyMessage}</h2></div></div>
+    <div className="panel-head"><div><span className="eyebrow">{title}</span><h2>{emptyMessage}</h2><p>Submitted audits only</p></div></div>
   </section>
 }
 
@@ -65,7 +65,7 @@ export default function Dashboard() {
       action={<button className="secondary-button" onClick={() => navigate('/reports')}>View Reports</button>}
     />
 
-    {!hasAnyData && <section className="card exec-panel"><div className="panel-head"><div><span className="eyebrow">DASHBOARD</span><h2>{emptyMessage}</h2></div></div></section>}
+    {!hasAnyData && <section className="card exec-panel"><div className="panel-head"><div><span className="eyebrow">DASHBOARD</span><h2>{emptyMessage}</h2><p>Submitted audits only</p></div></div></section>}
 
     {hasAnyData && <section className="leadership-kpi-grid">
       <Kpi label="Compliance Score" value={complianceScore === null ? emptyMessage : `${complianceScore}%`} meta="Submitted audits only" icon={Award} tone="green" onClick={() => navigate('/reports')} />
