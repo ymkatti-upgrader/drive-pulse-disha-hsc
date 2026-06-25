@@ -41,9 +41,12 @@ function normalizeText(value) {
 }
 
 function normalizeMobile(value) {
-  const digits = String(value || '').replace(/\D/g, '')
+  const digits = String(value || '')
+    .replace(/\s+/g, '')
+    .replace(/^\+91/, '')
+    .replace(/^91(?=\d{10,}$)/, '')
+    .replace(/\D/g, '')
   if (!digits) return ''
-  if (digits.startsWith('91') && digits.length > 10) return digits.slice(-10)
   return digits.length > 10 ? digits.slice(-10) : digits
 }
 
@@ -160,12 +163,26 @@ function auditBelongsToUser(audit, user) {
 function getSimpleStatus(status, row = {}) {
   const value = normalizeText(status)
   if (!value || ['open', 'assigned', 'assigned to ng pic', 'ng identified'].includes(value)) return 'Assigned'
-  if (['root cause updated', 'action plan created', 'planning'].includes(value) || row.root_cause || (Array.isArray(row.action_plan_items) && row.action_plan_items.length)) return 'Planning'
+  if (['root cause updated', 'action plan created', 'planning'].includes(value)) return 'Planning'
   if (['in progress', 'collaboration in progress', 'co-assigned'].includes(value)) return 'In Progress'
   if (['closure requested', 'submitted for review', 'pending approval'].includes(value)) return 'Submitted for Review'
   if (['rejected', 'send back', 'sent back', 'reassigned', 'reassigned by group disha', 'rejected by ceo'].includes(value)) return 'Reassigned'
   if (['completed', 'closed', 'closed by ceo', 'approved', 'approved closed'].includes(value)) return 'Closed'
   return 'Assigned'
+}
+
+function buildAssignedFilters(currentUser) {
+  const filters = []
+  if (currentUser?.id) filters.push(`pic_for_ng_user_id.eq.${currentUser.id}`)
+  const mobileCandidates = [
+    currentUser?.mobile_no,
+    currentUser?.mobile,
+    normalizeMobile(currentUser?.mobile_no || currentUser?.mobile || ''),
+  ].map(value => String(value || '').trim()).filter(Boolean)
+  mobileCandidates.forEach(value => {
+    if (!filters.includes(`pic_for_ng_mobile.eq.${value}`)) filters.push(`pic_for_ng_mobile.eq.${value}`)
+  })
+  return filters.join(',')
 }
 
 function isClosedStatus(status) {
@@ -246,12 +263,26 @@ export default function ActionCenter() {
 
         const fullSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, root_cause, cause_category, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, completed_at, completed_by, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_status, group_disha_approval_status, functional_hod_approval_status, ceo_approval_required, ceo_approval_status, extension_request_status, extension_requested_date, extension_reason, reviewed_by, reviewed_at, review_comments, responded_by, audit_location, pic_for_ng'
         const fallbackSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, pic_for_ng, result, status, root_cause, action_taken, closure_remarks, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, responded_by, audit_location'
+        const assignedFilters = buildAssignedFilters(currentUser)
         let { data, error: fetchError } = await client
           .from('audit_responses')
           .select(fullSelect)
           .eq('result', 'NG')
+        if (assignedFilters) {
+          const targeted = await client
+            .from('audit_responses')
+            .select(fullSelect)
+            .eq('result', 'NG')
+            .or(assignedFilters)
+          if (!targeted.error) {
+            data = targeted.data
+            fetchError = targeted.error
+          }
+        }
 
-        if (fetchError?.code === 'PGRST204') {
+        const initialRows = data || []
+        const initialAssignedRows = initialRows.filter(item => isAssignedToUser(item, currentUser))
+        if (!initialRows.length || !initialAssignedRows.length) {
           const fallback = await client.from('audit_responses').select(fallbackSelect).eq('result', 'NG')
           data = fallback.data
           fetchError = fallback.error
