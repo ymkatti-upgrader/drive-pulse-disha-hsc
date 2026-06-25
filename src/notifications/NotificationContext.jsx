@@ -70,7 +70,7 @@ function buildNotification(id, data) {
   }
 }
 
-function buildNotifications({ role, audits, capas, stories, aiHistory }) {
+function buildNotifications({ role, audits, capas, stories }) {
   const now = new Date()
   const assignedAuditCount = audits.filter(item => item.status !== 'Completed').length
   const dueTomorrowAudits = audits.filter(item => (['Scheduled', 'In Progress', 'In progress'].includes(item.status) || isInProgressAuditStatus(item.status)) && isDueTomorrow(item.date || item.targetDate || item.due, now))
@@ -88,8 +88,6 @@ function buildNotifications({ role, audits, capas, stories, aiHistory }) {
   const pendingStories = stories.filter(item => ['Submitted', 'Pending Review'].includes(item.status))
   const approvedStories = stories.filter(item => item.status === 'Approved')
   const sharedStories = stories.filter(item => item.status === 'Shared')
-  const pendingAi = aiHistory.filter(item => !['Accepted', 'Edited & Accepted', 'Rejected'].includes(item.reviewStatus))
-  const acceptedAi = aiHistory.filter(item => ['Accepted', 'Edited & Accepted'].includes(item.reviewStatus))
   const items = []
 
   if (assignedAuditCount > 0) items.push(buildNotification('AUD-ASSIGNED', { priority: 'High', category: 'Audit Notifications', title: 'Audit Assigned', detail: `${assignedAuditCount} audit${assignedAuditCount > 1 ? 's are' : ' is'} assigned to the current team.`, dateTime: formatDateTime(now), timestamp: now.getTime(), actionLink: '/audits/new' }))
@@ -112,13 +110,10 @@ function buildNotifications({ role, audits, capas, stories, aiHistory }) {
   if (approvedStories.length > 0) items.push(buildNotification('YOK-APP', { priority: 'Medium', category: 'Yokoten Notifications', title: 'Yokoten Approved', detail: `${approvedStories.length} shared improvement${approvedStories.length > 1 ? 's are' : ' is'} approved for library use.`, dateTime: formatDateTime(now), timestamp: now.getTime(), actionLink: '/yokoten' }))
   if (sharedStories.length > 0) items.push(buildNotification('YOK-SHA', { priority: 'Normal', category: 'Yokoten Notifications', title: 'Yokoten Shared', detail: `${sharedStories.length} proven improvement${sharedStories.length > 1 ? 's have' : ' has'} been shared across locations.`, dateTime: formatDateTime(now), timestamp: now.getTime(), actionLink: '/yokoten' }))
 
-  if (pendingAi.length > 0) items.push(buildNotification('AI-REV', { priority: 'High', category: 'AI Sensei Notifications', title: 'AI Suggestion Awaiting Review', detail: `${pendingAi.length} AI suggestion${pendingAi.length > 1 ? 's are' : ' is'} waiting for PIC review.`, dateTime: formatDateTime(now), timestamp: now.getTime(), actionLink: '/improvements' }))
-  if (acceptedAi.length > 0) items.push(buildNotification('AI-ACC', { priority: 'Normal', category: 'AI Sensei Notifications', title: 'AI Suggestion Accepted', detail: `${acceptedAi.length} AI suggestion${acceptedAi.length > 1 ? 's have' : ' has'} been accepted.`, dateTime: formatDateTime(now), timestamp: now.getTime(), actionLink: '/improvements' }))
-
   const scoped = role === 'Group DISHA HSC PIC'
-    ? items.filter(item => item.category === 'Audit Notifications' || item.category === 'Verification Notifications' || item.category === 'AI Sensei Notifications')
+    ? items.filter(item => item.category === 'Audit Notifications' || item.category === 'Verification Notifications')
     : role === 'Location Functional HOD'
-      ? items.filter(item => item.category === 'Improvement Action Notifications' || item.category === 'Verification Notifications' || item.category === 'AI Sensei Notifications' || item.category === 'Yokoten Notifications')
+      ? items.filter(item => item.category === 'Improvement Action Notifications' || item.category === 'Verification Notifications' || item.category === 'Yokoten Notifications')
       : items
 
   return scoped
@@ -133,13 +128,11 @@ export function NotificationProvider({ children }) {
   const [readIds, setReadIds] = useState(readStoredIds)
 
   const notifications = useMemo(() => {
-    const aiHistory = capas.flatMap(item => Array.isArray(item.aiSenseiHistory) ? item.aiSenseiHistory : [])
     return buildNotifications({
       role: getPrimaryRole(user) || 'Viewer',
       audits: liveAudits,
       capas,
       stories,
-      aiHistory,
     }).sort((a, b) => b.timestamp - a.timestamp).map(item => ({ ...item, read: readIds.includes(item.id), status: readIds.includes(item.id) ? 'Read' : 'Unread' }))
   }, [user, liveAudits, capas, stories, readIds])
 

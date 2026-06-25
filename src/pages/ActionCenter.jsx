@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, Bell, CheckCircle2, Clock3, ShieldAlert, Target, TrendingUp } from 'lucide-react'
+import { ArrowRight, Bell, CheckCircle2, Clock3, Plus, ShieldAlert, Target, TrendingUp, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAudits } from '../audits/AuditContext'
@@ -6,15 +6,27 @@ import { canAccessAuditModule, isSystemAdmin, useAuth } from '../auth/AuthContex
 import { PageHeader, StatusBadge } from '../components/UI'
 import { requireSupabase } from '../supabaseClient'
 
+const causeCategories = ['Manpower', 'Method', 'Machine / Equipment', 'Material', 'Environment', 'Measurement / Monitoring', 'Others']
+const actionStatuses = ['Open', 'In Progress', 'Completed']
+const supportStatuses = ['Pending', 'In Progress', 'Completed']
+
 const emptyActionForm = {
+  causeCategory: '',
   rootCause: '',
-  correctiveActionPlan: '',
-  preventiveActionPlan: '',
+  actionPlanItems: [],
   actionTaken: '',
   closureRemarks: '',
   actualClosureDate: '',
-  status: 'Open',
   closureEvidenceFiles: [],
+  collaborationRequired: false,
+  collaboratorUserId: '',
+  supportDepartment: '',
+  supportRequired: '',
+  supportRemarks: '',
+  supportStatus: 'Pending',
+  reviewComments: '',
+  extensionRequestedDate: '',
+  extensionReason: '',
 }
 
 function normalizeText(value) {
@@ -27,22 +39,11 @@ function cleanText(value) {
     .replace(/\u00c3\u201a/g, '')
     .replace(/\s*\u00b7\s*/g, ' | ')
     .replace(/\s+/g, ' ')
-    .replace(/\s*-\s*-\s*/g, ' - ')
     .trim()
 }
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim())
-}
-
-function formatDate(value) {
-  const text = cleanText(value)
-  if (!text || text === '-') return ''
-  return text.slice(0, 10)
-}
-
-function safeJoin(parts, separator = ' | ') {
-  return parts.map(cleanText).filter(part => part && part !== '-' && !isUuid(part)).join(separator)
 }
 
 function cleanDisplayValue(value, fallback = 'Not available') {
@@ -51,12 +52,14 @@ function cleanDisplayValue(value, fallback = 'Not available') {
   return text
 }
 
-function shortDepartment(value) {
-  const text = cleanDisplayValue(value, '')
-  if (!text) return 'Not available'
-  const departments = text.split(',').map(part => cleanText(part)).filter(Boolean)
-  const visible = departments.slice(0, 2).join(', ')
-  return departments.length > 2 ? `${visible}...` : visible
+function formatDate(value) {
+  const text = cleanText(value)
+  if (!text || text === '-' || isUuid(text)) return ''
+  return text.slice(0, 10)
+}
+
+function safeJoin(parts, separator = ' | ') {
+  return parts.map(part => cleanDisplayValue(part, '')).filter(Boolean).join(separator)
 }
 
 function getDisplayName(value) {
@@ -65,25 +68,24 @@ function getDisplayName(value) {
   return text.split(/\s*(?:\||\u00b7|,)\s*/).map(cleanText).find(part => part && !isUuid(part)) || 'Not available'
 }
 
-function getPicParts(value) {
-  const parts = cleanText(value).split(/\s*(?:\||\u00b7|,)\s*/).map(cleanText).filter(Boolean)
-  return {
-    name: getDisplayName(value),
-    role: parts.find(part => /pic|hod|admin|auditor|functional/i.test(part) && !isUuid(part)) || '',
-    location: parts.find(part => /^BL/i.test(part)) || '',
-  }
-}
-
-function getAuditDisplayId(value) {
-  const text = cleanText(value)
-  if (!text || isUuid(text)) return 'Not available'
-  return text
+function shortDepartment(value) {
+  const text = cleanDisplayValue(value, '')
+  if (!text) return 'Not available'
+  const departments = text.split(',').map(part => cleanText(part)).filter(Boolean)
+  return departments.length > 2 ? `${departments.slice(0, 2).join(', ')}...` : departments.join(', ')
 }
 
 function getSubQuestionLabel(value) {
   const text = cleanText(value).replace(/^Q/i, '')
-  if (!text || text === '-') return 'Not available'
-  return `Q${text}`
+  return text && text !== '-' ? `Q${text}` : 'Not available'
+}
+
+function hasRole(user, terms) {
+  return (user?.access || []).some(mapping => {
+    const role = normalizeText(mapping.role)
+    const userType = normalizeText(mapping.user_type)
+    return terms.some(term => role.includes(term) || userType.includes(term))
+  })
 }
 
 function auditBelongsToUser(audit, user) {
@@ -93,33 +95,35 @@ function auditBelongsToUser(audit, user) {
     || [audit.auditor_name, audit.auditorName, audit.owner, audit.createdByName].some(value => normalizeText(value) && normalizeText(value) === userName)
 }
 
-function responseBelongsToPic(item, user) {
-  return item.pic_for_ng_user_id === user?.id || (user?.mobile_no && item.pic_for_ng_mobile === user.mobile_no)
+function userFacingStatus(status, row = {}) {
+  const value = normalizeText(status)
+  if (value === 'submitted for review' || value === 'closure requested') return 'Submitted for Review'
+  if (['closed', 'completed', 'approved'].includes(value)) return 'Closed'
+  if (['reassigned', 'rejected', 'send back', 'sent back'].includes(value)) return 'Reassigned'
+  if (value === 'in progress') return 'In Progress'
+  if (value === 'planning' || row.root_cause || (Array.isArray(row.action_plan_items) && row.action_plan_items.length)) return 'Planning'
+  return 'Assigned'
 }
 
-function responseBelongsToAuditor(item, audit, user) {
-  return item.responded_by === user?.id || auditBelongsToUser(audit, user)
-}
-
-function isCompletedStatus(status) {
-  return ['completed', 'closed'].includes(normalizeText(status))
-}
-
-function isInProgressStatus(status) {
-  return normalizeText(status) === 'in progress'
+function isClosedStatus(status) {
+  return userFacingStatus(status) === 'Closed'
 }
 
 function isOverdue(item) {
-  if (!item.closingDate || isCompletedStatus(item.status)) return false
-  const dueDate = new Date(item.closingDate)
-  if (Number.isNaN(dueDate.getTime())) return false
+  if (!item.targetDate || isClosedStatus(item.status)) return false
+  const due = new Date(item.targetDate)
+  if (Number.isNaN(due.getTime())) return false
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  return dueDate < today
+  return due < today
 }
 
 function ActionCard({ title, count, meta, tone, onClick, icon: Icon }) {
-  return <button className={`action-summary ${tone}`} onClick={onClick}><span><Icon size={18} /></span><div><strong>{count}</strong><small>{title}</small><p>{meta}</p></div><ArrowRight size={16} /></button>
+  return <button className={`action-summary ${tone}`} onClick={onClick}><span><Icon size={17} /></span><div><strong>{count}</strong><small>{title}</small><p>{meta}</p></div><ArrowRight size={15} /></button>
+}
+
+function buildEmptyPlanRow() {
+  return { id: `plan-${Date.now()}`, action: '', responsiblePerson: '', targetDate: '', status: 'Open' }
 }
 
 export default function ActionCenter() {
@@ -128,6 +132,7 @@ export default function ActionCenter() {
   const { audits } = useAudits()
   const [activeTab, setActiveTab] = useState('assigned')
   const [ngItems, setNgItems] = useState([])
+  const [people, setPeople] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [editingNgId, setEditingNgId] = useState('')
@@ -138,6 +143,23 @@ export default function ActionCenter() {
   const [refreshKey, setRefreshKey] = useState(0)
   const adminView = isSystemAdmin(user)
   const auditorView = canAccessAuditModule(user)
+  const reviewerView = hasRole(user, ['group disha', 'group disha hsc pic', 'system admin', 'super admin'])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadPeople() {
+      try {
+        const client = requireSupabase()
+        const { data, error: loadError } = await client.from('app_users').select('id, employee_name, mobile_no, active').eq('active', true)
+        if (loadError) throw loadError
+        if (!cancelled) setPeople(data || [])
+      } catch {
+        if (!cancelled) setPeople([])
+      }
+    }
+    loadPeople()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -154,24 +176,28 @@ export default function ActionCenter() {
         const client = requireSupabase()
         let query = client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, updated_at, audit_location, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, completed_at, completed_by, responded_by')
+          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, root_cause, cause_category, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, completed_at, completed_by, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, extension_request_status, extension_requested_date, extension_reason, reviewed_by, reviewed_at, review_comments, responded_by, audit_location')
           .eq('result', 'NG')
 
-        if (!adminView && !auditorView) {
-          const assignedFilters = [
+        if (!adminView && !auditorView && !reviewerView) {
+          const filters = [
             `pic_for_ng_user_id.eq.${user.id}`,
             user.mobile_no ? `pic_for_ng_mobile.eq.${user.mobile_no}` : '',
+            `collaborator_user_id.eq.${user.id}`,
+            user.mobile_no ? `collaborator_mobile.eq.${user.mobile_no}` : '',
           ].filter(Boolean).join(',')
-          query = query.or(assignedFilters || `pic_for_ng_user_id.eq.${user.id}`)
+          query = query.or(filters || `pic_for_ng_user_id.eq.${user.id}`)
         }
 
         const { data, error: fetchError } = await query
         if (fetchError) throw fetchError
 
         if (!cancelled) {
-          const scopedRows = adminView ? data || [] : (data || []).filter(item => {
+          const scopedRows = adminView || reviewerView ? data || [] : (data || []).filter(item => {
             const audit = audits.find(auditItem => auditItem.id === item.audit_id)
-            return responseBelongsToPic(item, user) || (auditorView && responseBelongsToAuditor(item, audit, user))
+            const assigned = item.pic_for_ng_user_id === user.id || (user.mobile_no && item.pic_for_ng_mobile === user.mobile_no)
+            const collaborator = item.collaborator_user_id === user.id || (user.mobile_no && item.collaborator_mobile === user.mobile_no)
+            return assigned || collaborator || (auditorView && (item.responded_by === user.id || auditBelongsToUser(audit, user)))
           })
           setNgItems(scopedRows)
         }
@@ -186,92 +212,107 @@ export default function ActionCenter() {
     }
 
     loadNgItems()
-    return () => {
-      cancelled = true
-    }
-  }, [adminView, auditorView, user, audits, refreshKey])
+    return () => { cancelled = true }
+  }, [adminView, auditorView, reviewerView, user, audits, refreshKey])
 
   const hubCards = useMemo(() => ngItems.map(item => {
     const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
     const fullDepartment = audit.department || (Array.isArray(audit.departments) ? audit.departments.join(', ') : audit.departments) || ''
-    const picParts = getPicParts(item.pic_for_ng_name || item.pic_for_ng_user_id || '')
+    const status = userFacingStatus(item.status, item)
+    const targetDate = formatDate(item.tentative_closing_date) || 'Not available'
     const card = {
       id: item.id,
       rawAuditId: item.audit_id || '',
-      auditId: getAuditDisplayId(item.audit_id),
+      auditId: isUuid(item.audit_id) ? 'Not available' : cleanDisplayValue(item.audit_id),
       location: cleanDisplayValue(audit.location || item.audit_location),
       department: shortDepartment(fullDepartment),
       fullDepartment: cleanDisplayValue(fullDepartment),
       auditType: cleanDisplayValue(audit.audit_type || audit.auditType),
       auditorName: cleanDisplayValue(audit.auditor_name || audit.auditorName || audit.owner),
-      auditStartDate: formatDate(audit.audit_start_date || audit.auditStartDate || audit.scheduledDate || audit.createdAt) || 'Not available',
       dq: cleanDisplayValue(item.dq_question_num),
       subQuestion: getSubQuestionLabel(item.sub_question_num),
       question: cleanDisplayValue(item.sub_question_text),
       condition: cleanDisplayValue(item.current_condition_observed),
-      closingDate: formatDate(item.tentative_closing_date) || 'Not available',
-      pic: picParts.name,
-      picRole: picParts.role,
-      picLocation: picParts.location,
-      status: cleanDisplayValue(item.status, 'Open'),
+      assignedPic: getDisplayName(item.pic_for_ng_name || item.pic_for_ng_user_id),
+      targetDate,
+      status,
+      causeCategory: cleanText(item.cause_category),
       rootCause: cleanText(item.root_cause),
+      actionPlanItems: Array.isArray(item.action_plan_items) ? item.action_plan_items : [],
       correctiveActionPlan: cleanText(item.corrective_action_plan),
       preventiveActionPlan: cleanText(item.preventive_action_plan),
       actionTaken: cleanText(item.action_taken),
       closureRemarks: cleanText(item.closure_remarks),
       closureEvidenceFiles: Array.isArray(item.closure_evidence_files) ? item.closure_evidence_files : [],
       actualClosureDate: formatDate(item.actual_closure_date),
-      completedAt: formatDate(item.completed_at),
-      completedBy: item.completed_by || '',
-      respondedBy: item.responded_by || '',
-      isAssigned: responseBelongsToPic(item, user),
-      isRaisedByMe: responseBelongsToAuditor(item, audit, user),
+      collaborationRequired: Boolean(item.collaboration_required),
+      collaboratorUserId: item.collaborator_user_id || '',
+      collaboratorName: cleanText(item.collaborator_name),
+      collaboratorMobile: cleanText(item.collaborator_mobile),
+      supportDepartment: cleanText(item.support_department),
+      supportRequired: cleanText(item.support_required),
+      supportRemarks: cleanText(item.support_remarks),
+      supportStatus: cleanText(item.support_status) || 'Pending',
+      extensionRequestStatus: cleanText(item.extension_request_status),
+      extensionRequestedDate: formatDate(item.extension_requested_date),
+      extensionReason: cleanText(item.extension_reason),
+      reviewComments: cleanText(item.review_comments),
+      isAssigned: item.pic_for_ng_user_id === user?.id || (user?.mobile_no && item.pic_for_ng_mobile === user.mobile_no),
+      isCollaborator: item.collaborator_user_id === user?.id || (user?.mobile_no && item.collaborator_mobile === user.mobile_no),
+      isRaisedByMe: item.responded_by === user?.id || auditBelongsToUser(audit, user),
     }
-    return { ...card, overdue: isOverdue(card), completed: isCompletedStatus(card.status), inProgress: isInProgressStatus(card.status) }
+    return { ...card, overdue: isOverdue(card), closed: status === 'Closed', reviewReady: status === 'Submitted for Review' || cleanText(item.extension_request_status) === 'Pending' }
   }), [ngItems, audits, user])
 
   const visibleTabs = useMemo(() => {
     const tabs = []
-    if (!adminView) tabs.push({ key: 'assigned', label: 'Assigned to Me', count: hubCards.filter(item => item.isAssigned).length })
-    if (auditorView || adminView) tabs.push({ key: 'raised', label: 'Raised by Me / Auditor View', count: hubCards.filter(item => item.isRaisedByMe).length })
+    if (!adminView) tabs.push({ key: 'assigned', label: 'Assigned to Me', count: hubCards.filter(item => item.isAssigned && !item.closed).length })
+    if (auditorView || adminView) tabs.push({ key: 'raised', label: 'Raised by Me', count: hubCards.filter(item => item.isRaisedByMe).length })
+    tabs.push({ key: 'collaboration', label: 'Collaboration', count: hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)).length })
+    if (reviewerView || adminView) tabs.push({ key: 'review', label: 'Review Queue', count: hubCards.filter(item => item.reviewReady).length })
+    tabs.push({ key: 'completed', label: 'Completed / Closed', count: hubCards.filter(item => item.closed).length })
     if (adminView) tabs.push({ key: 'all', label: 'All NG Actions', count: hubCards.length })
-    tabs.push({ key: 'inProgress', label: 'In Progress', count: hubCards.filter(item => item.inProgress).length })
-    tabs.push({ key: 'completed', label: 'Completed / Closed', count: hubCards.filter(item => item.completed).length })
-    tabs.push({ key: 'overdue', label: 'Overdue', count: hubCards.filter(item => item.overdue).length })
     return tabs
-  }, [adminView, auditorView, hubCards])
+  }, [adminView, auditorView, reviewerView, hubCards])
 
   useEffect(() => {
-    if (visibleTabs.length && !visibleTabs.some(tab => tab.key === activeTab)) {
-      setActiveTab(visibleTabs[0].key)
-    }
+    if (visibleTabs.length && !visibleTabs.some(tab => tab.key === activeTab)) setActiveTab(visibleTabs[0].key)
   }, [activeTab, visibleTabs])
 
   const hubRows = useMemo(() => {
     if (activeTab === 'raised') return hubCards.filter(item => item.isRaisedByMe)
+    if (activeTab === 'collaboration') return hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired))
+    if (activeTab === 'review') return hubCards.filter(item => item.reviewReady)
+    if (activeTab === 'completed') return hubCards.filter(item => item.closed)
     if (activeTab === 'all') return hubCards
-    if (activeTab === 'inProgress') return hubCards.filter(item => item.inProgress)
-    if (activeTab === 'completed') return hubCards.filter(item => item.completed)
-    if (activeTab === 'overdue') return hubCards.filter(item => item.overdue)
-    return hubCards.filter(item => adminView || item.isAssigned)
+    return hubCards.filter(item => (adminView || item.isAssigned) && !item.closed)
   }, [activeTab, adminView, hubCards])
 
   function openActionForm(item) {
-    if (!adminView && !item.isAssigned) {
-      setActionMessage('Only the assigned NG PIC or System Admin can update this action.')
+    if (!adminView && !item.isAssigned && !item.isCollaborator) {
+      setActionMessage('Only the assigned PIC, collaborator, or System Admin can update this action.')
       return
     }
     setEditingNgId(item.id)
     setActionMessage('')
     setActionForm({
+      ...emptyActionForm,
+      causeCategory: item.causeCategory || '',
       rootCause: item.rootCause || '',
-      correctiveActionPlan: item.correctiveActionPlan || '',
-      preventiveActionPlan: item.preventiveActionPlan || '',
+      actionPlanItems: item.actionPlanItems.length ? item.actionPlanItems : [],
       actionTaken: item.actionTaken || '',
       closureRemarks: item.closureRemarks || '',
       actualClosureDate: item.actualClosureDate || '',
-      status: item.status || 'Open',
       closureEvidenceFiles: item.closureEvidenceFiles || [],
+      collaborationRequired: item.collaborationRequired || false,
+      collaboratorUserId: item.collaboratorUserId || '',
+      supportDepartment: item.supportDepartment || '',
+      supportRequired: item.supportRequired || '',
+      supportRemarks: item.supportRemarks || '',
+      supportStatus: item.supportStatus || 'Pending',
+      reviewComments: item.reviewComments || '',
+      extensionRequestedDate: item.extensionRequestedDate || '',
+      extensionReason: item.extensionReason || '',
     })
   }
 
@@ -279,178 +320,210 @@ export default function ActionCenter() {
     setActionForm(current => ({ ...current, [field]: value }))
   }
 
+  function updatePlanRow(index, field, value) {
+    setActionForm(current => ({ ...current, actionPlanItems: current.actionPlanItems.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row) }))
+  }
+
+  function removePlanRow(index) {
+    setActionForm(current => ({ ...current, actionPlanItems: current.actionPlanItems.filter((_, rowIndex) => rowIndex !== index) }))
+  }
+
+  function addPlanRow() {
+    setActionForm(current => ({ ...current, actionPlanItems: [...current.actionPlanItems, buildEmptyPlanRow()] }))
+  }
+
   function handleClosureEvidence(event) {
-    const files = Array.from(event.target.files || []).map(file => ({
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      capturedAt: new Date().toISOString(),
-    }))
-    if (files.length) {
-      setActionForm(current => ({ ...current, closureEvidenceFiles: [...(current.closureEvidenceFiles || []), ...files] }))
-    }
+    const files = Array.from(event.target.files || []).map(file => ({ name: file.name, size: file.size, type: file.type, capturedAt: new Date().toISOString() }))
+    if (files.length) setActionForm(current => ({ ...current, closureEvidenceFiles: [...(current.closureEvidenceFiles || []), ...files] }))
     event.target.value = ''
   }
 
-  function validateNgAction(nextStatus) {
+  function validateAction(nextStatus) {
     const pending = []
-    const hasAnyActionField = [
-      actionForm.rootCause,
-      actionForm.correctiveActionPlan,
-      actionForm.preventiveActionPlan,
-      actionForm.actionTaken,
-      actionForm.closureRemarks,
-    ].some(value => value.trim())
-
-    if (nextStatus === 'Completed') {
-      if (!actionForm.rootCause.trim()) pending.push('Root Cause missing')
-      if (!actionForm.correctiveActionPlan.trim()) pending.push('Corrective Action Plan missing')
+    const hasProgress = actionForm.rootCause.trim() || actionForm.causeCategory || actionForm.actionPlanItems.some(row => cleanText(row.action)) || actionForm.actionTaken.trim() || actionForm.closureRemarks.trim()
+    if (nextStatus === 'Submitted for Review') {
+      if (!actionForm.causeCategory) pending.push('Cause Category missing')
+      if (!actionForm.rootCause.trim()) pending.push('Main Root Cause missing')
+      if (!actionForm.actionPlanItems.some(row => cleanText(row.action))) pending.push('At least one Action Plan row missing')
       if (!actionForm.actionTaken.trim() && !actionForm.closureRemarks.trim()) pending.push('Action Taken / Closure Remarks missing')
       if (!actionForm.actualClosureDate) pending.push('Actual Closure Date missing')
-    } else if (nextStatus === 'In Progress' && !hasAnyActionField) {
-      pending.push('Enter at least one action field before saving In Progress')
+    } else if (!hasProgress) {
+      pending.push('Enter at least one root cause, action plan, or action taken field before saving progress')
     }
     return pending
   }
 
-  async function saveNgAction(nextStatus = actionForm.status) {
+  async function saveAction(nextStatus = 'Planning') {
     if (!editingNgId || !user?.id) return
-    const pending = validateNgAction(nextStatus)
+    const pending = validateAction(nextStatus)
     if (pending.length) {
       setActionMessage(pending.join('\n'))
       return
     }
 
+    const collaborator = people.find(person => person.id === actionForm.collaboratorUserId) || null
     setActionSaving(true)
     setActionMessage('')
     try {
       const client = requireSupabase()
-      const { error: saveError } = await client.rpc('submit_ng_action_closure', {
+      const { error: saveError } = await client.rpc('submit_disha_action_update', {
         p_response_id: editingNgId,
         p_user_id: user.id,
+        p_status: nextStatus,
+        p_cause_category: actionForm.causeCategory || null,
         p_root_cause: actionForm.rootCause || null,
-        p_corrective_action_plan: actionForm.correctiveActionPlan || null,
-        p_preventive_action_plan: actionForm.preventiveActionPlan || null,
+        p_action_plan_items: actionForm.actionPlanItems || [],
         p_action_taken: actionForm.actionTaken || null,
         p_closure_remarks: actionForm.closureRemarks || null,
         p_actual_closure_date: actionForm.actualClosureDate || null,
-        p_status: nextStatus,
         p_closure_evidence_files: actionForm.closureEvidenceFiles || [],
+        p_collaboration_required: Boolean(actionForm.collaborationRequired),
+        p_collaborator_user_id: collaborator?.id || null,
+        p_collaborator_name: collaborator?.employee_name || null,
+        p_collaborator_mobile: collaborator?.mobile_no || null,
+        p_support_department: actionForm.supportDepartment || null,
+        p_support_required: actionForm.supportRequired || null,
+        p_support_remarks: actionForm.supportRemarks || null,
+        p_support_status: actionForm.supportStatus || null,
+        p_extension_requested_date: actionForm.extensionRequestedDate || null,
+        p_extension_reason: actionForm.extensionReason || null,
       })
       if (saveError) throw saveError
-      setActionMessage(nextStatus === 'Completed' ? 'Action submitted as Completed' : 'Action updated')
-      setActionForm(current => ({ ...current, status: nextStatus }))
+      setActionMessage(nextStatus === 'Submitted for Review' ? 'Submitted for review' : 'Progress saved')
       setRefreshKey(current => current + 1)
-      if (nextStatus === 'Completed') setEditingNgId('')
+      if (nextStatus === 'Submitted for Review') setEditingNgId('')
     } catch (saveError) {
-      setActionMessage(saveError?.message || 'Unable to update NG action.')
+      setActionMessage(saveError?.message || 'Unable to update action.')
+    } finally {
+      setActionSaving(false)
+    }
+  }
+
+  async function reviewAction(item, decision) {
+    const comments = actionForm.reviewComments || item.reviewComments || ''
+    if (decision === 'Send Back' && !comments.trim()) {
+      setActionMessage('Review comments are required to send back.')
+      setEditingNgId(item.id)
+      return
+    }
+    setActionSaving(true)
+    setActionMessage('')
+    try {
+      const client = requireSupabase()
+      const { error: reviewError } = await client.rpc('review_disha_action', {
+        p_response_id: item.id,
+        p_user_id: user.id,
+        p_decision: decision,
+        p_review_comments: comments || null,
+      })
+      if (reviewError) throw reviewError
+      setActionMessage(decision === 'Approve Closure' ? 'Closure approved' : 'Action sent back')
+      setEditingNgId('')
+      setRefreshKey(current => current + 1)
+    } catch (reviewError) {
+      setActionMessage(reviewError?.message || 'Unable to complete review.')
     } finally {
       setActionSaving(false)
     }
   }
 
   return <div className="action-center-page">
-    <PageHeader eyebrow="DISHA ACTION HUB" title="Disha Action Hub" description="Convert NG points into root cause, corrective action, preventive action, evidence and closure tracking." action={<button className="secondary-button" onClick={() => navigate('/dashboard')}><TrendingUp size={18} /> Back to Dashboard</button>} />
+    <PageHeader eyebrow="DISHA ACTION HUB" title="Disha Action Hub" description="Simple journey: Understand Issue -> Root Cause -> Action Plan -> Evidence -> Submit for Review." action={<button className="secondary-button" onClick={() => navigate('/dashboard')}><TrendingUp size={17} /> Back to Dashboard</button>} />
 
     <section className="action-summary-grid">
-      <ActionCard title="Assigned to Me" count={hubCards.filter(item => item.isAssigned).length} meta="My NG actions" tone="blue" icon={Target} onClick={() => setActiveTab('assigned')} />
-      <ActionCard title="In Progress" count={hubCards.filter(item => item.inProgress).length} meta="Action work started" tone="amber" icon={Clock3} onClick={() => setActiveTab('inProgress')} />
-      <ActionCard title="Completed / Closed" count={hubCards.filter(item => item.completed).length} meta="Closure submitted" tone="green" icon={CheckCircle2} onClick={() => setActiveTab('completed')} />
-      <ActionCard title="Overdue" count={hubCards.filter(item => item.overdue).length} meta="Past tentative date" tone="red" icon={AlertTriangle} onClick={() => setActiveTab('overdue')} />
-      {adminView && <ActionCard title="All NG Actions" count={hubCards.length} meta="Admin view" tone="blue" icon={ShieldAlert} onClick={() => setActiveTab('all')} />}
+      <ActionCard title="Assigned to Me" count={hubCards.filter(item => item.isAssigned && !item.closed).length} meta="My open actions" tone="blue" icon={Target} onClick={() => setActiveTab('assigned')} />
+      <ActionCard title="Collaboration" count={hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)).length} meta="Support requested" tone="amber" icon={Clock3} onClick={() => setActiveTab('collaboration')} />
+      <ActionCard title="Review Queue" count={hubCards.filter(item => item.reviewReady).length} meta="Submitted or extension" tone="green" icon={CheckCircle2} onClick={() => setActiveTab('review')} />
+      <ActionCard title="Completed / Closed" count={hubCards.filter(item => item.closed).length} meta="Closed cases" tone="blue" icon={ShieldAlert} onClick={() => setActiveTab('completed')} />
+      {adminView && <ActionCard title="All NG Actions" count={hubCards.length} meta="Admin view" tone="blue" icon={Bell} onClick={() => setActiveTab('all')} />}
     </section>
 
     <section className="card action-section-card">
-      <div className="panel-head"><div><span className="eyebrow">NG ACTION WORKFLOW</span><h2>Audit NG action items</h2></div><Bell /></div>
+      <div className="panel-head"><div><span className="eyebrow">SIMPLIFIED ACTION JOURNEY</span><h2>NG action items</h2></div><Bell /></div>
       <div className="tabs">{visibleTabs.map(tab => <button className={activeTab === tab.key ? 'active' : ''} onClick={() => setActiveTab(tab.key)} key={tab.key}>{tab.label} <span>{tab.count}</span></button>)}</div>
       {loading ? <div className="action-empty">Loading Disha Action Hub...</div> : error ? <div className="action-empty">{error}</div> : hubRows.length === 0 ? <div className="action-empty">No NG actions found for this view.</div> : <div className="audit-review-table">
-        <div className="audit-review-row head">
-          <span>Audit</span>
-          <span>DQ</span>
-          <span>Sub</span>
-          <span>Issue</span>
-          <span>Status</span>
-        </div>
         {hubRows.map(item => {
-          const canUpdate = adminView || item.isAssigned
+          const canUpdate = adminView || item.isAssigned || item.isCollaborator
+          const canReview = reviewerView || adminView
           return <div key={item.id} className="action-row">
-            <div className={`action-priority ${item.overdue ? 'critical' : item.completed ? 'normal' : 'high'}`}>{item.overdue ? 'Overdue' : item.status}</div>
+            <div className={`action-priority ${item.overdue ? 'critical' : item.closed ? 'normal' : 'high'}`}>{item.overdue ? 'Overdue' : item.status}</div>
             <div className="action-main">
-              <div><strong>Status: {item.status}</strong>{item.actualClosureDate && <StatusBadge>Closed {item.actualClosureDate}</StatusBadge>}</div>
-              <p>Audit: {item.auditId}</p>
+              <div><strong>{safeJoin([item.dq, item.subQuestion])}</strong><StatusBadge>{item.status}</StatusBadge></div>
+              <p>Question: {item.question}</p>
               <small>Location: {item.location}</small>
               <small>Department: {item.department}</small>
-              <small>DQ: {safeJoin([item.dq, item.subQuestion])}</small>
-              <small>Question: {item.question}</small>
+              <small>Assigned PIC: {item.assignedPic}</small>
+              <small>Target Date: {item.targetDate}</small>
               <small>Condition: {item.condition}</small>
-              <small>Assigned PIC: {item.pic}</small>
-              <small>Target Date: {item.closingDate}{item.actualClosureDate ? ` | Actual Closure Date: ${item.actualClosureDate}` : ''}</small>
               {detailNgId === item.id && <section className="capa-detail-fields">
                 <div><span>Audit</span><strong>{item.auditId}</strong></div>
                 <div><span>Location</span><strong>{item.location}</strong></div>
                 <div><span>Department</span><strong>{item.fullDepartment}</strong></div>
                 <div><span>Auditor</span><strong>{item.auditorName}</strong></div>
-                <div><span>Audit Type</span><strong>{item.auditType}</strong></div>
-                <div><span>Audit Start Date</span><strong>{item.auditStartDate}</strong></div>
-                <div><span>DQ Number</span><strong>{item.dq}</strong></div>
-                <div><span>Sub-question Number</span><strong>{item.subQuestion}</strong></div>
-                <div><span>Sub-question Text</span><strong>{item.question}</strong></div>
-                <div><span>Assigned PIC</span><strong>{item.pic}</strong></div>
-                {item.picRole && <div><span>Role</span><strong>{item.picRole}</strong></div>}
-                {item.picLocation && <div><span>PIC Location</span><strong>{item.picLocation}</strong></div>}
-                <div><span>Current Condition / Gap Observed</span><strong>{item.condition}</strong></div>
-                <div><span>Tentative Closing Date</span><strong>{item.closingDate}</strong></div>
+                <div><span>DQ</span><strong>{safeJoin([item.dq, item.subQuestion])}</strong></div>
+                <div><span>Question</span><strong>{item.question}</strong></div>
+                <div><span>Current Condition / Gap</span><strong>{item.condition}</strong></div>
+                <div><span>Target Date</span><strong>{item.targetDate}</strong></div>
+                <div><span>Cause Category</span><strong>{item.causeCategory || 'Not available'}</strong></div>
                 <div><span>Root Cause</span><strong>{item.rootCause || 'Not available'}</strong></div>
-                <div><span>Corrective Action Plan</span><strong>{item.correctiveActionPlan || 'Not available'}</strong></div>
-                <div><span>Preventive Action Plan</span><strong>{item.preventiveActionPlan || 'Not available'}</strong></div>
-                <div><span>Action Taken / Closure Remarks</span><strong>{item.actionTaken || item.closureRemarks || 'Not available'}</strong></div>
+                <div><span>Action Taken</span><strong>{item.actionTaken || item.closureRemarks || 'Not available'}</strong></div>
                 <div><span>Actual Closure Date</span><strong>{item.actualClosureDate || 'Not available'}</strong></div>
-                <div><span>Current Status</span><strong>{item.status}</strong></div>
               </section>}
               {editingNgId === item.id && <section className="form-grid wide">
-                <label className="wide">Root Cause
-                  <textarea rows="2" value={actionForm.rootCause} onChange={event => updateActionForm('rootCause', event.target.value)} placeholder="Enter root cause" />
-                </label>
-                <label className="wide">Corrective Action Plan
-                  <textarea rows="2" value={actionForm.correctiveActionPlan} onChange={event => updateActionForm('correctiveActionPlan', event.target.value)} placeholder="Enter corrective action plan" />
-                </label>
-                <label className="wide">Preventive Action Plan
-                  <textarea rows="2" value={actionForm.preventiveActionPlan} onChange={event => updateActionForm('preventiveActionPlan', event.target.value)} placeholder="Optional preventive action" />
-                </label>
-                <label className="wide">Action Taken
-                  <textarea rows="2" value={actionForm.actionTaken} onChange={event => updateActionForm('actionTaken', event.target.value)} placeholder="Enter action taken" />
-                </label>
-                <label className="wide">Closure Remarks
-                  <textarea rows="2" value={actionForm.closureRemarks} onChange={event => updateActionForm('closureRemarks', event.target.value)} placeholder="Enter closure remarks" />
-                </label>
-                <label>Status
-                  <select value={actionForm.status} onChange={event => updateActionForm('status', event.target.value)}>
-                    <option>Open</option>
-                    <option>In Progress</option>
-                    <option>Completed</option>
+                <div className="wide audit-checklist-note"><span>Step 1 - Understand Issue: {safeJoin([item.dq, item.subQuestion])} | {item.condition} | Target: {item.targetDate}</span></div>
+                <label>Step 2 - Cause Category
+                  <select value={actionForm.causeCategory} onChange={event => updateActionForm('causeCategory', event.target.value)}>
+                    <option value="">Select category</option>
+                    {causeCategories.map(category => <option key={category}>{category}</option>)}
                   </select>
                 </label>
-                <label>Actual Closure Date
-                  <input type="date" value={actionForm.actualClosureDate} onChange={event => updateActionForm('actualClosureDate', event.target.value)} />
+                <label className="wide">Main Root Cause
+                  <textarea rows="3" value={actionForm.rootCause} onChange={event => updateActionForm('rootCause', event.target.value)} placeholder="Enter confirmed root cause" />
                 </label>
-                <label className="wide">Closure Evidence
-                  <input type="file" multiple onChange={handleClosureEvidence} />
-                  {(actionForm.closureEvidenceFiles || []).length > 0 && <small>{actionForm.closureEvidenceFiles.map(file => file.name || file).join(', ')}</small>}
+                <div className="wide">
+                  <div className="panel-head"><div><span className="eyebrow">STEP 3</span><h2>Action Plan</h2></div><button className="secondary-button" type="button" onClick={addPlanRow}><Plus size={14} /> Add Action</button></div>
+                  {actionForm.actionPlanItems.length === 0 ? <div className="action-empty">No action rows yet.</div> : actionForm.actionPlanItems.map((row, index) => <div className="form-grid wide" key={row.id || index}>
+                    <label className="wide">Action<input value={row.action || ''} onChange={event => updatePlanRow(index, 'action', event.target.value)} /></label>
+                    <label>Responsible Person<input value={row.responsiblePerson || ''} onChange={event => updatePlanRow(index, 'responsiblePerson', event.target.value)} /></label>
+                    <label>Target Date<input type="date" value={row.targetDate || ''} onChange={event => updatePlanRow(index, 'targetDate', event.target.value)} /></label>
+                    <label>Status<select value={row.status || 'Open'} onChange={event => updatePlanRow(index, 'status', event.target.value)}>{actionStatuses.map(status => <option key={status}>{status}</option>)}</select></label>
+                    <button className="secondary-button" type="button" onClick={() => removePlanRow(index)}><X size={14} /> Remove</button>
+                  </div>)}
+                </div>
+                <label className="wide">Step 4 - Action Taken / Closure Remarks
+                  <textarea rows="3" value={actionForm.actionTaken} onChange={event => updateActionForm('actionTaken', event.target.value)} />
                 </label>
+                <label>Actual Closure Date<input type="date" value={actionForm.actualClosureDate} onChange={event => updateActionForm('actualClosureDate', event.target.value)} /></label>
+                <label>Evidence Upload<input type="file" multiple onChange={handleClosureEvidence} /></label>
+                <label className="wide"><input type="checkbox" checked={actionForm.collaborationRequired} onChange={event => updateActionForm('collaborationRequired', event.target.checked)} /> Need support from another department?</label>
+                {actionForm.collaborationRequired && <>
+                  <label>Support Department<input value={actionForm.supportDepartment} onChange={event => updateActionForm('supportDepartment', event.target.value)} /></label>
+                  <label>Support PIC<select value={actionForm.collaboratorUserId} onChange={event => updateActionForm('collaboratorUserId', event.target.value)}><option value="">Select support PIC</option>{people.map(person => <option key={person.id} value={person.id}>{person.employee_name}</option>)}</select></label>
+                  <label className="wide">Support Required<textarea rows="2" value={actionForm.supportRequired} onChange={event => updateActionForm('supportRequired', event.target.value)} /></label>
+                  {(item.isCollaborator || adminView) && <>
+                    <label className="wide">Support Remarks<textarea rows="2" value={actionForm.supportRemarks} onChange={event => updateActionForm('supportRemarks', event.target.value)} /></label>
+                    <label>Support Status<select value={actionForm.supportStatus} onChange={event => updateActionForm('supportStatus', event.target.value)}>{supportStatuses.map(status => <option key={status}>{status}</option>)}</select></label>
+                  </>}
+                </>}
+                <label>Request Extension Date<input type="date" value={actionForm.extensionRequestedDate} onChange={event => updateActionForm('extensionRequestedDate', event.target.value)} /></label>
+                <label className="wide">Extension Reason<textarea rows="2" value={actionForm.extensionReason} onChange={event => updateActionForm('extensionReason', event.target.value)} /></label>
+                {(canReview || item.reviewReady) && <label className="wide">Review Comments<textarea rows="2" value={actionForm.reviewComments} onChange={event => updateActionForm('reviewComments', event.target.value)} /></label>}
                 {actionMessage && <div className="wide audit-checklist-note" role="alert"><span>{actionMessage}</span></div>}
                 <div className="wide form-footer">
                   <button className="secondary-button" type="button" onClick={() => setEditingNgId('')} disabled={actionSaving}>Cancel</button>
                   <div>
-                    <button className="secondary-button" type="button" onClick={() => saveNgAction(actionForm.status)} disabled={actionSaving}>Save Progress</button>
-                    <button className="primary-button" type="button" onClick={() => saveNgAction('Completed')} disabled={actionSaving}>Submit Completed</button>
+                    {canUpdate && <button className="secondary-button" type="button" onClick={() => saveAction(actionForm.actionPlanItems.length ? 'In Progress' : 'Planning')} disabled={actionSaving}>Save Progress</button>}
+                    {canUpdate && <button className="primary-button" type="button" onClick={() => saveAction('Submitted for Review')} disabled={actionSaving}>Submit for Review</button>}
+                    {canReview && item.reviewReady && <button className="primary-button" type="button" onClick={() => reviewAction(item, 'Approve Closure')} disabled={actionSaving}>Approve Closure</button>}
+                    {canReview && item.reviewReady && <button className="secondary-button" type="button" onClick={() => reviewAction(item, 'Send Back')} disabled={actionSaving}>Send Back</button>}
                   </div>
                 </div>
               </section>}
             </div>
             <div>
-              <button className="secondary-button" type="button" onClick={() => navigate(`/audits/${item.rawAuditId}/conduct${item.dq !== 'Not available' ? `?dq=${encodeURIComponent(item.dq)}` : ''}`)}>Open Audit</button>
               <button className="secondary-button" type="button" onClick={() => setDetailNgId(current => current === item.id ? '' : item.id)}>View Details</button>
-              {canUpdate ? <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Update Action</button> : <span className="action-empty">View only</span>}
+              {canUpdate ? <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Update Action</button> : <button className="secondary-button" type="button" onClick={() => setDetailNgId(item.id)}>View Progress</button>}
+              {canReview && item.reviewReady && <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Review</button>}
             </div>
           </div>
         })}

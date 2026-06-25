@@ -1548,3 +1548,39 @@ td strong,td small{font-size:15px}
   .admin-stepper{grid-template-columns:1fr}
   .admin-matrix{min-width:700px}
 }
+
+/* Simplified Disha Action Hub density */
+body{font-size:14px}
+.content{padding:22px 26px 44px}
+.card,.panel,.action-row,.action-summary,.action-section-card{border-radius:11px}
+.panel,.action-section-card,.governance-card,.mgmt-panel,.admin-summary,.admin-subcard{padding:14px}
+.page-header h1,.detail-header h1{font-size:26px;line-height:1.15}
+.page-header p,.panel-head p,.action-main p,.mgmt-section-head p,.governance-card .panel-head p{font-size:13px;line-height:1.45}
+.panel-head h2,.action-section-card h2,.governance-card .panel-head h2{font-size:17px}
+.eyebrow{font-size:10px;letter-spacing:.08em}
+.primary-button,.secondary-button,.text-button{font-size:12px;padding:8px 11px;border-radius:7px}
+.tabs button{font-size:12px;padding:8px 10px}
+.status,.status-badge,.action-priority{font-size:11px;padding:4px 7px;border-radius:999px}
+.action-summary-grid{gap:10px}
+.action-summary{padding:12px;min-height:88px}
+.action-summary strong{font-size:24px}
+.action-summary small{font-size:12px}
+.action-summary p{font-size:11px;margin-top:3px}
+.action-row{grid-template-columns:92px 1fr auto;padding:12px;gap:12px}
+.action-main{gap:6px}
+.action-main strong{font-size:15px}
+.action-main small{font-size:12px;line-height:1.35}
+.form-grid{gap:10px}
+.form-grid label,.governance-form-grid label{font-size:12px}
+.form-grid input,.form-grid select,.form-grid textarea,.governance-form-grid input,.governance-form-grid select,.governance-form-grid textarea{font-size:13px;padding:9px 10px;border-radius:7px}
+.capa-detail-fields{gap:8px}
+.capa-detail-fields>div{padding:10px;border-radius:9px}
+.capa-detail-fields span{font-size:11px}
+.capa-detail-fields strong,.capa-detail-fields p{font-size:13px;line-height:1.4}
+.ai-sensei-card,.ai-sensei-history-card,.ai-sensei-overlay,.five-why-card{display:none !important}
+
+@media(max-width:760px){
+  .content{padding:16px 14px 72px}
+  .action-row{grid-template-columns:1fr}
+  .action-row>div:last-child{display:flex;gap:8px;flex-wrap:wrap}
+}
