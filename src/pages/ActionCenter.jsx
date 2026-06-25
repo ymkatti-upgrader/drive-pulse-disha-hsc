@@ -40,6 +40,13 @@ function normalizeText(value) {
   return String(value || '').trim().toLowerCase()
 }
 
+function normalizeMobile(value) {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (!digits) return ''
+  if (digits.startsWith('91') && digits.length > 10) return digits.slice(-10)
+  return digits.length > 10 ? digits.slice(-10) : digits
+}
+
 function cleanText(value) {
   return String(value ?? '')
     .replace(/[\u00c2\ufffd]/g, '')
@@ -95,6 +102,25 @@ function hasRole(user, terms) {
   })
 }
 
+function isAssignedToUser(row, currentUser) {
+  if (!row || !currentUser) return false
+  if (row.pic_for_ng_user_id && row.pic_for_ng_user_id === currentUser.id) return true
+  const rowMobile = normalizeMobile(row.pic_for_ng_mobile)
+  const userMobile = normalizeMobile(currentUser.mobile_no || currentUser.mobile)
+  if (rowMobile && userMobile && rowMobile === userMobile) return true
+  const rowName = normalizeText(row.pic_for_ng_name || row.pic_for_ng)
+  const userName = normalizeText(currentUser.employee_name || currentUser.name || currentUser.full_name)
+  return Boolean(rowName && userName && rowName === userName)
+}
+
+function isCollaboratorForUser(row, currentUser) {
+  if (!row || !currentUser) return false
+  if (row.collaborator_user_id && row.collaborator_user_id === currentUser.id) return true
+  const rowMobile = normalizeMobile(row.collaborator_mobile)
+  const userMobile = normalizeMobile(currentUser.mobile_no || currentUser.mobile)
+  return Boolean(rowMobile && userMobile && rowMobile === userMobile)
+}
+
 function isExpenseApprover(user) {
   return isSystemAdmin(user) || hasRole(user, ['group disha', 'group functional hod', 'functional hod', 'ceo'])
 }
@@ -131,18 +157,19 @@ function auditBelongsToUser(audit, user) {
     || [audit.auditor_name, audit.auditorName, audit.owner, audit.createdByName].some(value => normalizeText(value) && normalizeText(value) === userName)
 }
 
-function userFacingStatus(status, row = {}) {
+function getSimpleStatus(status, row = {}) {
   const value = normalizeText(status)
-  if (value === 'submitted for review' || value === 'closure requested') return 'Submitted for Review'
-  if (['closed', 'completed', 'approved'].includes(value)) return 'Closed'
-  if (['reassigned', 'rejected', 'send back', 'sent back'].includes(value)) return 'Reassigned'
-  if (value === 'in progress') return 'In Progress'
-  if (value === 'planning' || row.root_cause || (Array.isArray(row.action_plan_items) && row.action_plan_items.length)) return 'Planning'
+  if (!value || ['open', 'assigned', 'assigned to ng pic', 'ng identified'].includes(value)) return 'Assigned'
+  if (['root cause updated', 'action plan created', 'planning'].includes(value) || row.root_cause || (Array.isArray(row.action_plan_items) && row.action_plan_items.length)) return 'Planning'
+  if (['in progress', 'collaboration in progress', 'co-assigned'].includes(value)) return 'In Progress'
+  if (['closure requested', 'submitted for review', 'pending approval'].includes(value)) return 'Submitted for Review'
+  if (['rejected', 'send back', 'sent back', 'reassigned', 'reassigned by group disha', 'rejected by ceo'].includes(value)) return 'Reassigned'
+  if (['completed', 'closed', 'closed by ceo', 'approved', 'approved closed'].includes(value)) return 'Closed'
   return 'Assigned'
 }
 
 function isClosedStatus(status) {
-  return userFacingStatus(status) === 'Closed'
+  return getSimpleStatus(status) === 'Closed'
 }
 
 function isOverdue(item) {
@@ -202,7 +229,8 @@ export default function ActionCenter() {
     let cancelled = false
 
     async function loadNgItems() {
-      if (!user?.id) {
+      const currentUser = user
+      if (!currentUser?.id) {
         setNgItems([])
         return
       }
@@ -211,30 +239,43 @@ export default function ActionCenter() {
       setError('')
       try {
         const client = requireSupabase()
-        let query = client
+        console.log('Disha current user', currentUser)
+        console.log('Disha role/userType', currentUser?.role, currentUser?.user_type)
+        console.log('Assigned NG query user id', currentUser?.id)
+        console.log('Assigned NG query mobile', currentUser?.mobile_no)
+
+        const fullSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, root_cause, cause_category, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, completed_at, completed_by, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_status, group_disha_approval_status, functional_hod_approval_status, ceo_approval_required, ceo_approval_status, extension_request_status, extension_requested_date, extension_reason, reviewed_by, reviewed_at, review_comments, responded_by, audit_location, pic_for_ng'
+        const fallbackSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, pic_for_ng, result, status, root_cause, action_taken, closure_remarks, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, responded_by, audit_location'
+        let { data, error: fetchError } = await client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, root_cause, cause_category, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, completed_at, completed_by, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_status, group_disha_approval_status, functional_hod_approval_status, ceo_approval_required, ceo_approval_status, extension_request_status, extension_requested_date, extension_reason, reviewed_by, reviewed_at, review_comments, responded_by, audit_location')
+          .select(fullSelect)
           .eq('result', 'NG')
 
-        if (!adminView && !auditorView && !reviewerView) {
-          const filters = [
-            `pic_for_ng_user_id.eq.${user.id}`,
-            user.mobile_no ? `pic_for_ng_mobile.eq.${user.mobile_no}` : '',
-            `collaborator_user_id.eq.${user.id}`,
-            user.mobile_no ? `collaborator_mobile.eq.${user.mobile_no}` : '',
-          ].filter(Boolean).join(',')
-          query = query.or(filters || `pic_for_ng_user_id.eq.${user.id}`)
+        if (fetchError?.code === 'PGRST204') {
+          const fallback = await client.from('audit_responses').select(fallbackSelect).eq('result', 'NG')
+          data = fallback.data
+          fetchError = fallback.error
         }
-
-        const { data, error: fetchError } = await query
         if (fetchError) throw fetchError
 
         if (!cancelled) {
+          const rows = data || []
+          const assignedRows = rows.filter(item => isAssignedToUser(item, currentUser))
+          const statusCounts = rows.reduce((counts, item) => {
+            const status = getSimpleStatus(item.status, item)
+            counts[status] = (counts[status] || 0) + 1
+            return counts
+          }, {})
+          console.log('Total NG rows fetched', rows?.length)
+          console.log('Assigned to me rows', assignedRows?.length)
+          console.log('Filter status counts', statusCounts)
+          if (!assignedRows.length) console.warn('No assigned NG items found for user', currentUser)
+
           const scopedRows = adminView || reviewerView || expenseApproverView ? data || [] : (data || []).filter(item => {
             const audit = audits.find(auditItem => auditItem.id === item.audit_id)
-            const assigned = item.pic_for_ng_user_id === user.id || (user.mobile_no && item.pic_for_ng_mobile === user.mobile_no)
-            const collaborator = item.collaborator_user_id === user.id || (user.mobile_no && item.collaborator_mobile === user.mobile_no)
-            return assigned || collaborator || (auditorView && (item.responded_by === user.id || auditBelongsToUser(audit, user)))
+            const assigned = isAssignedToUser(item, currentUser)
+            const collaborator = isCollaboratorForUser(item, currentUser)
+            return assigned || collaborator || (auditorView && (item.responded_by === currentUser.id || auditBelongsToUser(audit, currentUser)))
           })
           setNgItems(scopedRows)
         }
@@ -255,7 +296,7 @@ export default function ActionCenter() {
   const hubCards = useMemo(() => ngItems.map(item => {
     const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
     const fullDepartment = audit.department || (Array.isArray(audit.departments) ? audit.departments.join(', ') : audit.departments) || ''
-    const status = userFacingStatus(item.status, item)
+    const status = getSimpleStatus(item.status, item)
     const targetDate = formatDate(item.tentative_closing_date) || 'Not available'
     const card = {
       id: item.id,
@@ -303,8 +344,8 @@ export default function ActionCenter() {
       extensionRequestedDate: formatDate(item.extension_requested_date),
       extensionReason: cleanText(item.extension_reason),
       reviewComments: cleanText(item.review_comments),
-      isAssigned: item.pic_for_ng_user_id === user?.id || (user?.mobile_no && item.pic_for_ng_mobile === user.mobile_no),
-      isCollaborator: item.collaborator_user_id === user?.id || (user?.mobile_no && item.collaborator_mobile === user.mobile_no),
+      isAssigned: isAssignedToUser(item, user),
+      isCollaborator: isCollaboratorForUser(item, user),
       isRaisedByMe: item.responded_by === user?.id || auditBelongsToUser(audit, user),
     }
     return { ...card, overdue: isOverdue(card), closed: status === 'Closed', reviewReady: status === 'Submitted for Review' || cleanText(item.extension_request_status) === 'Pending', expensePending: expenseStatus(item) === 'Pending Approval' }
@@ -536,7 +577,7 @@ export default function ActionCenter() {
     <section className="card action-section-card">
       <div className="panel-head"><div><span className="eyebrow">SIMPLIFIED ACTION JOURNEY</span><h2>NG action items</h2></div><Bell /></div>
       <div className="tabs">{visibleTabs.map(tab => <button className={activeTab === tab.key ? 'active' : ''} onClick={() => setActiveTab(tab.key)} key={tab.key}>{tab.label} <span>{tab.count}</span></button>)}</div>
-      {loading ? <div className="action-empty">Loading Disha Action Hub...</div> : error ? <div className="action-empty">{error}</div> : hubRows.length === 0 ? <div className="action-empty">No NG actions found for this view.</div> : <div className="audit-review-table">
+      {loading ? <div className="action-empty">Loading Disha Action Hub...</div> : error ? <div className="action-empty">{error}</div> : hubRows.length === 0 ? <div className="action-empty">{activeTab === 'assigned' ? 'No NG actions assigned to you.' : 'No NG actions found for this view.'}</div> : <div className="audit-review-table">
         {hubRows.map(item => {
           const canUpdate = adminView || item.isAssigned || item.isCollaborator
           const canReview = reviewerView || adminView
