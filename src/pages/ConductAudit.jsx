@@ -231,7 +231,6 @@ function buildDraftPayload(items, auditId, respondedBy) {
     observation: String(item.currentCondition || '').trim() || null,
     comments: String(item.gapIdentified || '').trim() || null,
     audit_location: normalizeDraftValue(item.auditLocation || null),
-    audit_department: normalizeDraftValue(item.auditDepartment || null),
     responded_by: normalizeDraftValue(respondedBy),
     pic_for_ng_user_id: normalizeDraftValue(item.picForNgUserId || null),
     pic_for_ng_name: normalizeDraftValue(item.picForNgName || item.picForNg || null),
@@ -253,7 +252,6 @@ function mergeDraftRows(items, rows) {
       currentCondition: combinedCondition,
       gapIdentified: row.comments || '',
       auditLocation: row.audit_location || item.auditLocation || '',
-      auditDepartment: row.audit_department || item.auditDepartment || '',
       picForNg: row.pic_for_ng_user_id || row.pic_for_ng || '',
       picForNgUserId: row.pic_for_ng_user_id || '',
       picForNgName: row.pic_for_ng_name || row.pic_for_ng || '',
@@ -442,7 +440,6 @@ export default function ConductAudit() {
       picForNgUserId: item.picForNgUserId || '',
       picForNgName: item.picForNgName || '',
       auditLocation: currentAudit?.location || '',
-      auditDepartment: currentAuditDepartments.join(', ') || '',
       tentative_closing_date: getTentativeClosingDate(item),
       remarks: item.remarks || '',
     }))
@@ -553,7 +550,7 @@ export default function ConductAudit() {
         const client = requireSupabase()
         const { data, error: loadError } = await client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, audit_department, pic_for_ng, pic_for_ng_user_id, pic_for_ng_name, tentative_closing_date, evidence_files, responded_by, updated_at')
+          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, pic_for_ng_user_id, pic_for_ng_name, tentative_closing_date, evidence_files, responded_by, updated_at')
           .eq('audit_id', auditId)
 
         if (loadError) throw loadError
