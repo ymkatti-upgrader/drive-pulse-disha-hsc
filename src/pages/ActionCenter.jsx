@@ -1,6 +1,7 @@
 import { AlertTriangle, ArrowRight, Bell, CheckCircle2, Clock3, Filter, ShieldAlert, Target, TrendingUp } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAudits } from '../audits/AuditContext'
 import { useAuth } from '../auth/AuthContext'
 import { PageHeader, StatusBadge } from '../components/UI'
 import { useNotifications } from '../notifications/NotificationContext'
@@ -39,6 +40,7 @@ function NotificationRow({ item, onOpen }) {
 export default function ActionCenter() {
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { audits } = useAudits()
   const { notifications, markRead } = useNotifications()
   const [filter, setFilter] = useState('Today')
   const [assignedNgItems, setAssignedNgItems] = useState([])
@@ -79,28 +81,18 @@ export default function ActionCenter() {
       setAssignedError('')
       try {
         const client = requireSupabase()
-        const [idMatch, legacyMatch] = await Promise.all([
-          client
-            .from('audit_responses')
-            .select('id, audit_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng, result, updated_at, audit_location, audit_department')
-            .eq('result', 'NG')
-            .eq('pic_for_ng_user_id', user.id),
-          Promise.resolve(user.mobile_no || user.employee_name ? client
-            .from('audit_responses')
-            .select('id, audit_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng, result, updated_at, audit_location, audit_department')
-            .eq('result', 'NG')
-            .in('pic_for_ng', [user.mobile_no, user.employee_name].filter(Boolean)) : { data: [], error: null }),
-        ])
+        const filters = [
+          `pic_for_ng_user_id.eq.${user.id}`,
+          user.mobile_no ? `pic_for_ng_mobile.eq.${user.mobile_no}` : '',
+        ].filter(Boolean).join(',')
+        const { data, error } = await client
+          .from('audit_responses')
+          .select('id, audit_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, updated_at, audit_location')
+          .eq('result', 'NG')
+          .or(filters || `pic_for_ng_user_id.eq.${user.id}`)
 
-        if (idMatch.error) throw idMatch.error
-        if (legacyMatch.error) throw legacyMatch.error
-
-        const merged = new Map()
-        ;[...(idMatch.data || []), ...(legacyMatch.data || [])].forEach(item => {
-          if (!merged.has(item.id)) merged.set(item.id, item)
-        })
-
-        if (!cancelled) setAssignedNgItems([...merged.values()])
+        if (error) throw error
+        if (!cancelled) setAssignedNgItems(data || [])
       } catch (error) {
         if (!cancelled) {
           setAssignedNgItems([])
@@ -120,14 +112,14 @@ export default function ActionCenter() {
   const assignedNgCards = useMemo(() => assignedNgItems.map(item => ({
     id: item.id,
     auditId: item.audit_id || '-',
-    location: item.audit_location || '-',
-    department: item.audit_department || '-',
+    location: audits.find(audit => audit.id === item.audit_id)?.location || item.audit_location || '-',
+    department: audits.find(audit => audit.id === item.audit_id)?.department || audits.find(audit => audit.id === item.audit_id)?.departments || '-',
     dq: item.dq_question_num || '-',
     subQuestion: item.sub_question_num || '-',
     question: item.sub_question_text || '-',
     condition: item.current_condition_observed || '-',
     closingDate: item.tentative_closing_date || '-',
-    pic: item.pic_for_ng_name || item.pic_for_ng || '-',
+    pic: item.pic_for_ng_name || item.pic_for_ng_user_id || '-',
     status: item.result || 'NG',
   })), [assignedNgItems])
 

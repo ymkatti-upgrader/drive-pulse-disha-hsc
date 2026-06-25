@@ -234,6 +234,7 @@ function buildDraftPayload(items, auditId, respondedBy) {
     responded_by: normalizeDraftValue(respondedBy),
     pic_for_ng_user_id: normalizeDraftValue(item.picForNgUserId || null),
     pic_for_ng_name: normalizeDraftValue(item.picForNgName || item.picForNg || null),
+    pic_for_ng_mobile: normalizeDraftValue(item.picForNgMobile || null),
     pic_for_ng: normalizeDraftValue(item.picForNgName || item.picForNg || null),
     tentative_closing_date: getTentativeClosingDate(item) || null,
     evidence_files: Array.isArray(item.evidenceFiles) ? item.evidenceFiles : [],
@@ -255,6 +256,7 @@ function mergeDraftRows(items, rows) {
       picForNg: row.pic_for_ng_user_id || row.pic_for_ng || '',
       picForNgUserId: row.pic_for_ng_user_id || '',
       picForNgName: row.pic_for_ng_name || row.pic_for_ng || '',
+      picForNgMobile: row.pic_for_ng_mobile || '',
       tentative_closing_date: normalizeDraftDate(row.tentative_closing_date),
       evidenceFiles: Array.isArray(row.evidence_files) ? row.evidence_files : [],
       evidenceUploaded: Array.isArray(row.evidence_files) ? row.evidence_files.length > 0 : Boolean(item.evidenceUploaded),
@@ -439,6 +441,7 @@ export default function ConductAudit() {
       picForNg: item.picForNg || '',
       picForNgUserId: item.picForNgUserId || '',
       picForNgName: item.picForNgName || '',
+      picForNgMobile: item.picForNgMobile || '',
       auditLocation: currentAudit?.location || '',
       tentative_closing_date: getTentativeClosingDate(item),
       remarks: item.remarks || '',
@@ -550,7 +553,7 @@ export default function ConductAudit() {
         const client = requireSupabase()
         const { data, error: loadError } = await client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, pic_for_ng_user_id, pic_for_ng_name, tentative_closing_date, evidence_files, responded_by, updated_at')
+          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, tentative_closing_date, evidence_files, responded_by, updated_at')
           .eq('audit_id', auditId)
 
         if (loadError) throw loadError
@@ -931,9 +934,9 @@ export default function ConductAudit() {
     return matches.length ? matches : picOptions
   }, [picOptions, activeItem, selectedAuditLocation])
 
-  const getSelectedPicOption = item => relevantPicOptions.find(option => option.id === item.picForNgUserId || option.value === item.picForNgUserId || option.id === item.picForNg || option.value === item.picForNg || option.employee_name === item.picForNgName || option.employee_name === item.picForNg) || null
+  const getSelectedPicOption = item => relevantPicOptions.find(option => option.id === item.picForNgUserId || option.value === item.picForNgUserId || option.id === item.picForNg || option.value === item.picForNg || option.mobile_no === item.picForNgMobile || option.employee_name === item.picForNgName || option.employee_name === item.picForNg) || null
   const getWhatsAppDetails = item => {
-    if (item.result !== 'NG' || !(item.picForNgUserId || item.picForNg)) return null
+    if (item.result !== 'NG' || !(item.picForNgUserId || item.picForNgMobile || item.picForNg)) return null
     const selectedPic = getSelectedPicOption(item)
     if (!selectedPic?.mobile_no) return { missingMobile: true, selectedPic }
     const message = buildWhatsAppMessage({
@@ -1073,6 +1076,7 @@ export default function ConductAudit() {
                     picForNg: selectedPic?.id || event.target.value,
                     picForNgUserId: selectedPic?.id || event.target.value,
                     picForNgName: selectedPic?.label || selectedPic?.employee_name || selectedPic?.value || '',
+                    picForNgMobile: selectedPic?.mobile_no || '',
                   })
                 }}>
                   <option value="">Select PIC</option>
@@ -1082,7 +1086,7 @@ export default function ConductAudit() {
                   <span>Tentative Closing Date</span>
                   <input className="audit-inline-date" type="date" value={getTentativeClosingDate(item)} onChange={event => updateItem(item.dbId, { tentative_closing_date: event.target.value, tentativeClosingDate: event.target.value })} />
                 </label>}
-                {whatsappDetails && item.result === 'NG' && (item.picForNgUserId || item.picForNg) && (() => {
+                {whatsappDetails && item.result === 'NG' && (item.picForNgUserId || item.picForNgMobile || item.picForNg) && (() => {
                   if (whatsappDetails.missingMobile) return <small className="audit-pic-help">PIC mobile number not available</small>
                   return <a
                     className="secondary-button audit-whatsapp-link"
