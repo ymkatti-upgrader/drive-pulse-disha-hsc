@@ -173,8 +173,8 @@ export function canAccessAuditModule(user) {
   return getUserAccess(user).some(item => {
     const role = normalizeAuditRole(item.role)
     const userType = normalizeAuditRole(item.user_type)
-    return ['super admin', 'group disha hsc pic', 'branch disha hsc pic'].includes(role)
-      || ['super admin', 'group disha hsc pic', 'branch disha hsc pic'].includes(userType)
+    return ['super admin', 'system administrator', 'group disha hsc pic', 'branch disha hsc pic', 'auditor'].includes(role)
+      || ['super admin', 'system admin', 'system administrator', 'group disha hsc pic', 'branch disha hsc pic', 'auditor'].includes(userType)
   })
 }
 

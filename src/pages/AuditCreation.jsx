@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, Calendar, ChevronRight, Plus, Save, UserRound } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAudits, isInProgressAuditStatus } from '../audits/AuditContext'
-import { filterByUserAccess, isSystemAdmin, useAuth } from '../auth/AuthContext'
-import { DataRow, PageHeader, SearchBar, Stepper } from '../components/UI'
+import { canAccessAuditModule, filterByUserAccess, isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { DataRow, PageHeader, SearchBar, StatusBadge, Stepper } from '../components/UI'
 import { requireSupabase } from '../supabaseClient'
 
 const AUDIT_TYPE = 'Disha HanSaChu Audit'
@@ -60,6 +60,7 @@ export default function AuditCreation() {
   const { user } = useAuth()
   const { audits, createAudit, deleteAudit } = useAudits()
   const scopedAudits = filterByUserAccess(user, audits, item => ({ department: item.department, location: item.location }))
+  const canEditAudit = canAccessAuditModule(user) || isSystemAdmin(user)
   const [auditorOptions, setAuditorOptions] = useState([])
   const [validationError, setValidationError] = useState('')
   const [auditId, setAuditId] = useState('')
@@ -127,6 +128,7 @@ export default function AuditCreation() {
   const selectedAuditor = auditorOptions.find(option => option.value === form.auditorId) || null
 
   function saveCreationDraft() {
+    if (!canEditAudit) return
     const nextAuditId = auditId || `AUD-${Date.now()}`
     setAuditId(nextAuditId)
     const draft = {
@@ -157,6 +159,7 @@ export default function AuditCreation() {
   }
 
   function continueToChecklist() {
+    if (!canEditAudit) return
     const issues = []
     if (!form.location) issues.push('Location is required.')
     if (!form.auditorId) issues.push('Auditor name is required.')
@@ -206,10 +209,10 @@ export default function AuditCreation() {
   }
 
   return <>
-    <PageHeader eyebrow="AUDIT MANAGEMENT" title="Audits" description="Plan, assign and monitor HanSaChu audits." action={<button className="primary-button"><Plus size={17} /> New audit</button>} />
+    <PageHeader eyebrow="AUDIT MANAGEMENT" title="Audits" description="Plan, assign and monitor HanSaChu audits." action={canEditAudit ? <button className="primary-button"><Plus size={17} /> New audit</button> : <StatusBadge>Read-only View</StatusBadge>} />
     <div className="tabs"><button className="active">All audits <span>{scopedAudits.length}</span></button><button>Upcoming <span>{upcoming}</span></button><button>In progress <span>{inProgress}</span></button><button>Completed <span>{completed}</span></button></div>
     <div className="two-column-form">
-      <section className="card panel">
+      {canEditAudit && <section className="card panel">
         <div className="panel-head"><div><span className="eyebrow">CREATE NEW</span><h2>Audit details</h2></div></div>
         <Stepper steps={['Details', 'Checklist', 'Assign']} active={0} />
         <div className="form-grid">
@@ -222,7 +225,7 @@ export default function AuditCreation() {
         </div>
         {validationError && <div className="audit-checklist-note" role="alert"><AlertCircle size={18} /><span>{validationError}</span></div>}
         <div className="form-footer"><button className="secondary-button" type="button" onClick={saveCreationDraft}><Save size={17} /> Save draft</button><button className="primary-button" type="button" onClick={continueToChecklist}>Continue to checklist <ChevronRight size={17} /></button></div>
-      </section>
+      </section>}
       <section>
         <div className="list-toolbar"><SearchBar placeholder="Search audits" /></div>
         <div className="card data-list">
@@ -230,7 +233,7 @@ export default function AuditCreation() {
             const title = a.audit_type || a.title || AUDIT_TYPE
             const subtitle = [a.location, a.start_date || a.date].filter(Boolean).join(' - ')
             const canDelete = isSystemAdmin(user) && isInProgressAuditStatus(a.status)
-            return <DataRow key={a.id} title={title} subtitle={`${a.id} - ${subtitle || 'No details'}`} meta={a.score ? `${a.score}%` : null} status={a.status} onClick={() => isInProgressAuditStatus(a.status) && navigate(`/audits/${a.id}/conduct`)} onDelete={canDelete ? () => handleDeleteAudit(a.id) : undefined} />
+            return <DataRow key={a.id} title={title} subtitle={`${a.id} - ${subtitle || 'No details'}`} meta={a.score ? `${a.score}%` : null} status={a.status} onClick={() => navigate(`/audits/${a.id}/conduct`)} onDelete={canDelete ? () => handleDeleteAudit(a.id) : undefined} />
           })}
         </div>
       </section>

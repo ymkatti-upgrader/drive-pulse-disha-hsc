@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowRight, Bell, BookOpenCheck, ClipboardCheck, FileBarChart, LayoutDashboard, LogOut, Menu, MoreHorizontal, Settings2, ShieldCheck, Target, X } from 'lucide-react'
 import { useState } from 'react'
-import { canAccessAuditModule, getPrimaryRole, hasFullAccess, useAuth } from '../auth/AuthContext'
+import { getPrimaryRole, hasFullAccess, useAuth } from '../auth/AuthContext'
 import { useNotifications } from '../notifications/NotificationContext'
 
 const roleLabels = {
@@ -23,13 +23,12 @@ const desktopNav = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/management-review', label: 'Review Center', icon: FileBarChart },
   { to: '/audits/new', label: 'Audit', icon: ClipboardCheck },
-  { to: '/improvements', label: 'Improvements', icon: Target },
-  { to: '/action-center', label: 'Action Center', icon: Bell },
+  { to: '/action-center', label: 'Disha Action Hub', icon: Target },
   { to: '/yokoten', label: 'Yokoten Library', icon: BookOpenCheck },
   { to: '/masters', label: 'Masters', icon: Settings2 },
 ]
 
-const mobileNav = desktopNav.filter(item => ['/dashboard', '/audits/new', '/improvements'].includes(item.to))
+const mobileNav = desktopNav.filter(item => ['/dashboard', '/audits/new', '/action-center'].includes(item.to))
 
 export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -42,14 +41,12 @@ export default function AppShell() {
   const roleLabel = roleLabels[getPrimaryRole(user)] || getPrimaryRole(user)
   const mobileNo = user?.mobile_no || user?.mobile || ''
   const showLeadershipReview = hasFullAccess(user) || leadershipRoles.includes(getPrimaryRole(user))
-  const showAuditModule = canAccessAuditModule(user)
   const showMasters = (user?.access || []).some(item => {
     const role = String(item.role || '').trim().toLowerCase()
     const userType = String(item.user_type || '').trim().toLowerCase()
     return role === 'super admin' || userType === 'system admin'
   })
   const sidebarNav = desktopNav.filter(item => {
-    if (item.to === '/audits/new') return showAuditModule
     if (item.to === '/management-review') return showLeadershipReview
     if (item.to === '/masters') return showMasters
     return true
@@ -122,7 +119,7 @@ export default function AppShell() {
             </button>)}
           </div>
           <div className="notification-popover-footer">
-            <button className="secondary-button full" onClick={() => { setNotificationOpen(false); navigate('/action-center') }}>Open Action Center</button>
+            <button className="secondary-button full" onClick={() => { setNotificationOpen(false); navigate('/action-center') }}>Open Disha Action Hub</button>
           </div>
         </section>
       </>}
@@ -133,7 +130,7 @@ export default function AppShell() {
       <button className="more-scrim" aria-label="Close More menu" onClick={() => setMoreOpen(false)} />
       <section className="more-sheet" aria-label="More menu">
         <div className="more-sheet-head"><div><strong>{roleLabel}</strong><span>+91 {mobileNo}</span></div><button aria-label="Close More menu" onClick={() => setMoreOpen(false)}><X size={20} /></button></div>
-        <button onClick={() => openMoreRoute('/action-center')}><Bell size={20} /><span><strong>Action Center</strong><small>Pending work and approvals</small></span></button>
+        <button onClick={() => openMoreRoute('/action-center')}><Bell size={20} /><span><strong>Disha Action Hub</strong><small>NG action closure workflow</small></span></button>
         {showLeadershipReview && <button onClick={() => openMoreRoute('/management-review')}><FileBarChart size={20} /><span><strong>Review Center</strong><small>Executive boardroom review</small></span></button>}
         <button onClick={() => openMoreRoute('/verification')}><ShieldCheck size={20} /><span><strong>Verification</strong><small>Review closure evidence</small></span></button>
         <button onClick={() => openMoreRoute('/yokoten')}><BookOpenCheck size={20} /><span><strong>Yokoten Library</strong><small>Shared improvement practices</small></span></button>
@@ -143,7 +140,7 @@ export default function AppShell() {
     </>}
 
     <nav className="bottom-nav">
-      {mobileNav.filter(item => item.to !== '/audits/new' || showAuditModule).map(({ to, label, icon: Icon }) => <NavLink to={to} key={to}><Icon size={20} /><span>{label}</span></NavLink>)}
+      {mobileNav.map(({ to, label, icon: Icon }) => <NavLink to={to} key={to}><Icon size={20} /><span>{label}</span></NavLink>)}
       <button className={moreOpen || isMoreRoute ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal size={20} /><span>More</span></button>
     </nav>
   </div>

@@ -1,12 +1,10 @@
-import { Navigate, Route, Routes, useParams } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import AppShell from './components/AppShell'
 import Login from './pages/Login'
 import ResetPassword from './pages/ResetPassword'
 import Dashboard from './pages/Dashboard'
 import AuditCreation from './pages/AuditCreation'
 import ConductAudit from './pages/ConductAudit'
-import CapaTracker from './pages/Capa'
-import CapaDetail from './pages/CapaDetail'
 import Verification from './pages/Verification'
 import Reports from './pages/Reports'
 import ManagementReviewCenter from './pages/ManagementReviewCenter'
@@ -15,7 +13,7 @@ import MasterData from './pages/MasterData'
 import MasterImport from './pages/MasterImport'
 import YokotenLibrary from './pages/YokotenLibrary'
 import ActionCenter from './pages/ActionCenter'
-import ProtectedRoute, { AuditRouteGuard } from './auth/ProtectedRoute'
+import ProtectedRoute from './auth/ProtectedRoute'
 import { isSystemAdmin, useAuth } from './auth/AuthContext'
 
 export default function App() {
@@ -26,14 +24,12 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route element={<AppShell />}>
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route element={<AuditRouteGuard />}>
-          <Route path="/audits/new" element={<AuditCreation />} />
-          <Route path="/audits/:id/conduct" element={<ConductAudit />} />
-        </Route>
-        <Route path="/improvements" element={<CapaTracker />} />
-        <Route path="/improvements/:id" element={<CapaDetail />} />
-        <Route path="/capa" element={<Navigate to="/improvements" replace />} />
-        <Route path="/capa/:id" element={<LegacyImprovementRedirect />} />
+        <Route path="/audits/new" element={<AuditCreation />} />
+        <Route path="/audits/:id/conduct" element={<ConductAudit />} />
+        <Route path="/improvements" element={<Navigate to="/action-center" replace />} />
+        <Route path="/improvements/:id" element={<Navigate to="/action-center" replace />} />
+        <Route path="/capa" element={<Navigate to="/action-center" replace />} />
+        <Route path="/capa/:id" element={<Navigate to="/action-center" replace />} />
         <Route path="/verification" element={<Verification />} />
         <Route path="/yokoten" element={<YokotenLibrary />} />
         <Route path="/reports" element={<Reports />} />
@@ -52,9 +48,4 @@ export default function App() {
 function AdminOnly({ children }) {
   const { user } = useAuth()
   return isSystemAdmin(user) ? children : <Navigate to="/dashboard" replace />
-}
-
-function LegacyImprovementRedirect() {
-  const { id } = useParams()
-  return <Navigate to={`/improvements/${id}`} replace />
 }

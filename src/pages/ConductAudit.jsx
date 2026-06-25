@@ -5,7 +5,7 @@ import { isInProgressAuditStatus, useAudits } from '../audits/AuditContext'
 import { useAuditChecklist } from '../audits/useAuditChecklist'
 import { Progress } from '../components/UI'
 import { useCapas } from '../capa/CapaContext'
-import { getPrimaryRole, isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { canAccessAuditModule, getPrimaryRole, isSystemAdmin, useAuth } from '../auth/AuthContext'
 import { requireSupabase } from '../supabaseClient'
 
 function weightedScore(items) {
@@ -260,8 +260,16 @@ function mergeDraftRows(items, rows) {
       picForNgMobile: row.pic_for_ng_mobile || '',
       status: row.status || '',
       tentative_closing_date: normalizeDraftDate(row.tentative_closing_date),
+      tentativeClosingDate: normalizeDraftDate(row.tentative_closing_date),
       evidenceFiles: Array.isArray(row.evidence_files) ? row.evidence_files : [],
       evidenceUploaded: Array.isArray(row.evidence_files) ? row.evidence_files.length > 0 : Boolean(item.evidenceUploaded),
+      rootCause: row.root_cause || '',
+      correctiveActionPlan: row.corrective_action_plan || '',
+      preventiveActionPlan: row.preventive_action_plan || '',
+      actionTaken: row.action_taken || '',
+      closureRemarks: row.closure_remarks || '',
+      actualClosureDate: normalizeDraftDate(row.actual_closure_date),
+      closureEvidenceFiles: Array.isArray(row.closure_evidence_files) ? row.closure_evidence_files : [],
     }
   })
 }
@@ -348,19 +356,20 @@ function DetailAccordion({ title, value, open = false }) {
   </details>
 }
 
-function ScoreButtons({ item, onSelect }) {
+function ScoreButtons({ item, onSelect, disabled = false }) {
   return <div className="audit-score-buttons compact">
-    <button className={`score-ok ${item.result === 'OK' ? 'selected' : ''}`} onClick={event => { event.stopPropagation(); onSelect('OK') }}><Check /><span>OK</span></button>
-    <button className={`score-ng ${item.result === 'NG' ? 'selected' : ''}`} onClick={event => { event.stopPropagation(); onSelect('NG') }}><X /><span>NG</span></button>
-    <button className={`score-na ${item.result === 'NA' ? 'selected' : ''}`} onClick={event => { event.stopPropagation(); onSelect('NA') }}><Minus /><span>NA</span></button>
+    <button disabled={disabled} className={`score-ok ${item.result === 'OK' ? 'selected' : ''}`} onClick={event => { event.stopPropagation(); if (!disabled) onSelect('OK') }}><Check /><span>OK</span></button>
+    <button disabled={disabled} className={`score-ng ${item.result === 'NG' ? 'selected' : ''}`} onClick={event => { event.stopPropagation(); if (!disabled) onSelect('NG') }}><X /><span>NG</span></button>
+    <button disabled={disabled} className={`score-na ${item.result === 'NA' ? 'selected' : ''}`} onClick={event => { event.stopPropagation(); if (!disabled) onSelect('NA') }}><Minus /><span>NA</span></button>
   </div>
 }
 
-function EvidenceUploadCard({ item, onUpdate }) {
+function EvidenceUploadCard({ item, onUpdate, disabled = false }) {
   const fileCount = item.evidenceFiles?.length || 0
 
   function handleFiles(event) {
     event.stopPropagation()
+    if (disabled) return
     const nextFiles = Array.from(event.target.files || []).map(file => file.name)
     if (!nextFiles.length) return
     onUpdate({
@@ -372,7 +381,7 @@ function EvidenceUploadCard({ item, onUpdate }) {
 
   return <div className="audit-evidence-actions" onClick={event => event.stopPropagation()}>
     <label className={`audit-evidence-card ${fileCount ? 'uploaded' : ''}`}>
-      <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onChange={handleFiles} />
+      <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" disabled={disabled} onChange={handleFiles} />
       <Upload size={16} />
       <span>{fileCount ? `${fileCount} file${fileCount > 1 ? 's' : ''}` : 'Upload'}</span>
     </label>
@@ -407,7 +416,9 @@ export default function ConductAudit() {
   const draftSaveTimerRef = useRef(null)
   const currentAudit = audits.find(item => item.id === id) || audits.find(item => isInProgressAuditStatus(item.status)) || audits[0]
   const auditId = currentAudit?.id || id || ''
-  const canDeleteCurrentAudit = useMemo(() => canDeleteAudit(user, currentAudit), [user, currentAudit])
+  const canEditAudit = canAccessAuditModule(user) || isSystemAdmin(user)
+  const isReadOnly = !canEditAudit
+  const canDeleteCurrentAudit = useMemo(() => canEditAudit && canDeleteAudit(user, currentAudit), [canEditAudit, user, currentAudit])
   const currentAuditDepartments = useMemo(
     () => splitDelimitedValues(currentAudit?.departments || currentAudit?.department),
     [currentAudit?.departments, currentAudit?.department],
@@ -550,12 +561,12 @@ export default function ConductAudit() {
     let cancelled = false
 
     async function loadDraftResponses() {
-      if (!auditId || !items.length || !currentAudit || isSubmittedAuditStatus(currentAudit.status)) return
+      if (!auditId || !items.length || !currentAudit) return
       try {
         const client = requireSupabase()
         const { data, error: loadError } = await client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, status, tentative_closing_date, evidence_files, responded_by, updated_at')
+          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at')
           .eq('audit_id', auditId)
 
         if (loadError) throw loadError
@@ -606,6 +617,7 @@ export default function ConductAudit() {
   }, [auditId, currentAudit, items.length, user?.id, visibleChecklist])
 
   useEffect(() => {
+    if (isReadOnly) return
     if (!items.length || !auditId) return
     items.forEach(item => {
       if (item.result === 'NG') {
@@ -614,7 +626,7 @@ export default function ConductAudit() {
         cancelAutoCapa(auditId, item.id)
       }
     })
-  }, [items, auditId, currentAudit?.location, currentAudit?.departments, currentAudit?.department, upsertAutoCapa, cancelAutoCapa])
+  }, [isReadOnly, items, auditId, currentAudit?.location, currentAudit?.departments, currentAudit?.department, upsertAutoCapa, cancelAutoCapa])
 
   const dqGroups = useMemo(() => groupChecklistByDq(items), [items])
   const selectedDqFromUrl = searchParams.get('dq') || ''
@@ -673,6 +685,10 @@ export default function ConductAudit() {
   const overallProgress = progress
 
   async function persistDraftResponses(showToast = false) {
+    if (isReadOnly) {
+      setError('Read-only users cannot save audit drafts.')
+      return false
+    }
     if (!auditId) {
       setError('No audit selected.')
       return false
@@ -739,6 +755,7 @@ export default function ConductAudit() {
   }
 
   useEffect(() => {
+    if (isReadOnly) return
     if (!draftHydratedRef.current || !auditId || !draftPayload.length || !draftRespondedById) return
     if (draftStorageKey) localStorage.setItem(draftStorageKey, JSON.stringify({ rows: draftPayload, updatedAt: new Date().toISOString() }))
     if (draftSignature === lastDraftSignatureRef.current) return
@@ -749,7 +766,7 @@ export default function ConductAudit() {
     return () => {
       if (draftSaveTimerRef.current) window.clearTimeout(draftSaveTimerRef.current)
     }
-  }, [draftSignature, auditId, draftStorageKey, draftRespondedById])
+  }, [isReadOnly, draftSignature, auditId, draftStorageKey, draftRespondedById])
 
   useEffect(() => () => {
     if (draftSaveTimerRef.current) window.clearTimeout(draftSaveTimerRef.current)
@@ -773,11 +790,13 @@ export default function ConductAudit() {
   }, [activeGroup, activeId, dqItems])
 
   function updateItem(dbId, updates) {
+    if (isReadOnly) return
     setItems(current => current.map(item => (item.dbId === dbId ? { ...item, ...updates } : item)))
     setError('')
   }
 
   function selectResult(dbId, result) {
+    if (isReadOnly) return
     const current = items.find(item => item.dbId === dbId)
     if (!current) return
     updateItem(dbId, {
@@ -800,6 +819,10 @@ export default function ConductAudit() {
   }
 
   async function handleNextDq() {
+    if (isReadOnly) {
+      setError('Read-only users cannot move audit workflow to the next DQ.')
+      return
+    }
     console.log('Next DQ clicked')
     if (currentDqIndex < 0) {
       setError('Unable to determine current DQ.')
@@ -844,6 +867,7 @@ export default function ConductAudit() {
   }
 
   function openReview() {
+    if (isReadOnly) return
     const next = new URLSearchParams(searchParams)
     next.set('view', 'review')
     setSearchParams(next, { replace: true })
@@ -859,6 +883,10 @@ export default function ConductAudit() {
   }
 
   async function handleSubmit() {
+    if (isReadOnly) {
+      setError('Read-only users cannot submit audits.')
+      return
+    }
     const issues = []
     if (!completion.ready) {
       if (completion.pending) issues.push(`${completion.pending} unanswered questions`)
@@ -879,6 +907,7 @@ export default function ConductAudit() {
   }
 
   function openDeleteDialog() {
+    if (isReadOnly) return
     if (!canDeleteCurrentAudit || deleting) return
     setDeleteMessage('')
     setDeleteDialogOpen(true)
@@ -891,6 +920,7 @@ export default function ConductAudit() {
   }
 
   async function confirmDeleteAudit() {
+    if (isReadOnly) return
     if (!auditId || deleting) return
     setDeleting(true)
     setDeleteMessage('')
@@ -983,6 +1013,7 @@ export default function ConductAudit() {
         <div className="audit-progress-header-copy audit-progress-header-copy--featured">
           <span>Current DQ</span>
           <strong>{currentDqLabel} / {currentDqTotalLabel}</strong>
+          {isReadOnly && <small>Read-only View</small>}
           <small>{currentDqCompletedCount}/{dqItems.length} current DQ questions</small>
           <small>Sub Q Completed {completion.completed}/{totalQuestions} | Pending {pendingQuestions}</small>
         </div>
@@ -1008,13 +1039,13 @@ export default function ConductAudit() {
         </div>
       </div>
       <div className="audit-progress-header-actions">
-        <button className="secondary-button audit-header-action" disabled={draftSaving} onClick={() => persistDraftResponses(true)}><Save size={16} /> Save draft</button>
+        {!isReadOnly && <button className="secondary-button audit-header-action" disabled={draftSaving} onClick={() => persistDraftResponses(true)}><Save size={16} /> Save draft</button>}
         <button className="secondary-button audit-header-action" disabled={currentDqIndex <= 0} onClick={() => currentDqIndex > 0 && openDqGroup(dqGroups[currentDqIndex - 1].code)}><ChevronLeft size={16} /> Previous DQ</button>
-        {currentDqIndex >= 0 && currentDqIndex < dqGroups.length - 1 ? (
+        {!isReadOnly && (currentDqIndex >= 0 && currentDqIndex < dqGroups.length - 1 ? (
           <button className="primary-button audit-header-action audit-header-next" onClick={handleNextDq}>Next DQ</button>
         ) : (
           <button className="primary-button audit-header-action audit-header-next" onClick={openReview}>Review Audit</button>
-        )}
+        ))}
       </div>
     </header>
 
@@ -1064,15 +1095,15 @@ export default function ConductAudit() {
                 <small>{item.id}</small>
               </div>
               <div className="audit-question-score">
-                <ScoreButtons item={item} onSelect={result => selectResult(item.dbId, result)} />
+                <ScoreButtons item={item} disabled={isReadOnly} onSelect={result => selectResult(item.dbId, result)} />
               </div>
             </div>
 
             <div className="audit-question-card-right">
-              <textarea className="audit-inline-textarea audit-condition-textarea" rows="3" value={item.currentCondition || ''} placeholder="Current Condition / Gap Observed" onClick={event => event.stopPropagation()} onChange={event => updateItem(item.dbId, { currentCondition: event.target.value, gapIdentified: '' })} />
+              <textarea className="audit-inline-textarea audit-condition-textarea" rows="3" value={item.currentCondition || ''} placeholder="Current Condition / Gap Observed" readOnly={isReadOnly} onClick={event => event.stopPropagation()} onChange={event => updateItem(item.dbId, { currentCondition: event.target.value, gapIdentified: '' })} />
               <div className="audit-question-ng-fields">
-                <EvidenceUploadCard item={item} onUpdate={updates => updateItem(item.dbId, updates)} />
-                <select className="audit-inline-select" value={item.picForNgUserId || ''} onClick={event => event.stopPropagation()} onChange={event => {
+                <EvidenceUploadCard item={item} disabled={isReadOnly} onUpdate={updates => updateItem(item.dbId, updates)} />
+                <select className="audit-inline-select" value={item.picForNgUserId || ''} disabled={isReadOnly} onClick={event => event.stopPropagation()} onChange={event => {
                   const selectedPic = relevantPicOptions.find(option => option.id === event.target.value) || null
                   updateItem(item.dbId, {
                     picForNg: selectedPic?.id || event.target.value,
@@ -1086,7 +1117,7 @@ export default function ConductAudit() {
                 </select>
                 {item.result === 'NG' && <label className="audit-date-field" onClick={event => event.stopPropagation()}>
                   <span>Tentative Closing Date</span>
-                  <input className="audit-inline-date" type="date" value={getTentativeClosingDate(item)} onChange={event => updateItem(item.dbId, { tentative_closing_date: event.target.value, tentativeClosingDate: event.target.value })} />
+                  <input className="audit-inline-date" type="date" value={getTentativeClosingDate(item)} disabled={isReadOnly} onChange={event => updateItem(item.dbId, { tentative_closing_date: event.target.value, tentativeClosingDate: event.target.value })} />
                 </label>}
                 {whatsappDetails && item.result === 'NG' && (item.picForNgUserId || item.picForNgMobile || item.picForNg) && (() => {
                   if (whatsappDetails.missingMobile) return <small className="audit-pic-help">PIC mobile number not available</small>
@@ -1102,6 +1133,15 @@ export default function ConductAudit() {
                   </a>
                 })()}
               </div>
+              {item.result === 'NG' && <div className="capa-detail-fields">
+                <div><span>Action Status</span><strong>{item.status || 'Open'}</strong></div>
+                <div><span>Root Cause</span><strong>{item.rootCause || '-'}</strong></div>
+                <div><span>Corrective Action Plan</span><strong>{item.correctiveActionPlan || '-'}</strong></div>
+                <div><span>Preventive Action Plan</span><strong>{item.preventiveActionPlan || '-'}</strong></div>
+                <div><span>Action Taken / Closure Remarks</span><strong>{item.actionTaken || item.closureRemarks || '-'}</strong></div>
+                <div><span>Actual Closure Date</span><strong>{item.actualClosureDate || '-'}</strong></div>
+                <div><span>Evidence Links</span><strong>{(item.closureEvidenceFiles?.length ? item.closureEvidenceFiles : item.evidenceFiles || []).map(file => file.name || file).join(', ') || '-'}</strong></div>
+              </div>}
             </div>
           </div>
         </article>
@@ -1117,20 +1157,20 @@ export default function ConductAudit() {
       </div>
       {error && <div className="audit-submission-error" role="alert"><AlertCircle size={20} /><span>{error}</span></div>}
       <div className="audit-footer-actions">
-        <button className="secondary-button" disabled={draftSaving} onClick={() => persistDraftResponses(true)}><Save size={18} /> Save draft</button>
+        {!isReadOnly && <button className="secondary-button" disabled={draftSaving} onClick={() => persistDraftResponses(true)}><Save size={18} /> Save draft</button>}
         {!isReviewMode ? (
           <>
             <button className="secondary-button" disabled={currentDqIndex <= 0} onClick={() => currentDqIndex > 0 && openDqGroup(dqGroups[currentDqIndex - 1].code)}><ChevronLeft size={18} /> Previous DQ</button>
-            {currentDqIndex >= 0 && currentDqIndex < dqGroups.length - 1 ? (
+            {!isReadOnly && (currentDqIndex >= 0 && currentDqIndex < dqGroups.length - 1 ? (
               <button className="primary-button" onClick={handleNextDq}>Next DQ</button>
             ) : (
               <button className="primary-button" onClick={openReview}>Review Audit</button>
-            )}
+            ))}
           </>
         ) : (
           <>
             <button className="secondary-button" onClick={() => backToAudit(dqGroups[dqGroups.length - 1]?.code)}><ChevronLeft size={18} /> Back to Audit</button>
-            <button className="primary-button" disabled={!completion.ready} onClick={handleSubmit}><Send size={18} /> Submit Audit</button>
+            {!isReadOnly && <button className="primary-button" disabled={!completion.ready} onClick={handleSubmit}><Send size={18} /> Submit Audit</button>}
           </>
         )}
       </div>
