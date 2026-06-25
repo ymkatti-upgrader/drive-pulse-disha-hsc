@@ -44,7 +44,11 @@ function auditBelongsToUser(audit, user) {
 }
 
 function responseBelongsToPic(row, user) {
-  return row.pic_for_ng_user_id === user?.id || (user?.mobile_no && row.pic_for_ng_mobile === user.mobile_no)
+  const rowMobile = normalizeText(String(row.pic_for_ng_mobile || '').replace(/\D/g, '').slice(-10))
+  const userMobile = normalizeText(String(user?.mobile_no || user?.mobile || '').replace(/\D/g, '').slice(-10))
+  const rowName = normalizeText(row.pic_for_ng_name || row.pic_for_ng)
+  const userName = normalizeText(user?.employee_name || user?.name || user?.full_name)
+  return row.pic_for_ng_user_id === user?.id || (rowMobile && userMobile && rowMobile === userMobile) || (rowName && userName && rowName === userName)
 }
 
 function responseBelongsToAuditor(row, audit, user) {

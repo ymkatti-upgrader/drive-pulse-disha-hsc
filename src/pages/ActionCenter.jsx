@@ -260,37 +260,19 @@ export default function ActionCenter() {
         console.log('Disha role/userType', currentUser?.role, currentUser?.user_type)
         console.log('Assigned NG query user id', currentUser?.id)
         console.log('Assigned NG query mobile', currentUser?.mobile_no)
+        console.log('Assigned NG query name', currentUser?.employee_name)
 
-        const fullSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, root_cause, cause_category, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, completed_at, completed_by, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_status, group_disha_approval_status, functional_hod_approval_status, ceo_approval_required, ceo_approval_status, extension_request_status, extension_requested_date, extension_reason, reviewed_by, reviewed_at, review_comments, responded_by, audit_location, pic_for_ng'
-        const fallbackSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, pic_for_ng, result, status, root_cause, action_taken, closure_remarks, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, responded_by, audit_location'
-        const assignedFilters = buildAssignedFilters(currentUser)
-        let { data, error: fetchError } = await client
+        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, status, responded_by, created_at, updated_at, sub_question_text, audit_location, pic_for_ng'
+        const allNgResult = await client
           .from('audit_responses')
-          .select(fullSelect)
+          .select(stableSelect)
           .eq('result', 'NG')
-        if (assignedFilters) {
-          const targeted = await client
-            .from('audit_responses')
-            .select(fullSelect)
-            .eq('result', 'NG')
-            .or(assignedFilters)
-          if (!targeted.error) {
-            data = targeted.data
-            fetchError = targeted.error
-          }
-        }
-
-        const initialRows = data || []
-        const initialAssignedRows = initialRows.filter(item => isAssignedToUser(item, currentUser))
-        if (!initialRows.length || !initialAssignedRows.length) {
-          const fallback = await client.from('audit_responses').select(fallbackSelect).eq('result', 'NG')
-          data = fallback.data
-          fetchError = fallback.error
-        }
-        if (fetchError) throw fetchError
+        if (allNgResult.error) throw allNgResult.error
 
         if (!cancelled) {
-          const rows = data || []
+          const rows = allNgResult.data || []
+          console.log('All NG rows count', rows?.length)
+          console.log('Sample NG rows', rows?.slice(0, 5))
           const assignedRows = rows.filter(item => isAssignedToUser(item, currentUser))
           const statusCounts = rows.reduce((counts, item) => {
             const status = getSimpleStatus(item.status, item)
@@ -301,14 +283,7 @@ export default function ActionCenter() {
           console.log('Assigned to me rows', assignedRows?.length)
           console.log('Filter status counts', statusCounts)
           if (!assignedRows.length) console.warn('No assigned NG items found for user', currentUser)
-
-          const scopedRows = adminView || reviewerView || expenseApproverView ? data || [] : (data || []).filter(item => {
-            const audit = audits.find(auditItem => auditItem.id === item.audit_id)
-            const assigned = isAssignedToUser(item, currentUser)
-            const collaborator = isCollaboratorForUser(item, currentUser)
-            return assigned || collaborator || (auditorView && (item.responded_by === currentUser.id || auditBelongsToUser(audit, currentUser)))
-          })
-          setNgItems(scopedRows)
+          setNgItems(rows)
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -382,21 +357,34 @@ export default function ActionCenter() {
     return { ...card, overdue: isOverdue(card), closed: status === 'Closed', reviewReady: status === 'Submitted for Review' || cleanText(item.extension_request_status) === 'Pending', expensePending: expenseStatus(item) === 'Pending Approval' }
   }), [ngItems, audits, user])
 
+  const assignedCards = useMemo(() => hubCards.filter(item => item.isAssigned && !item.closed), [hubCards])
+  const raisedCards = useMemo(() => hubCards.filter(item => item.isRaisedByMe), [hubCards])
+  const collaborationCards = useMemo(() => hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)), [adminView, hubCards])
+  const reviewCards = useMemo(() => hubCards.filter(item => item.reviewReady), [hubCards])
+  const completedCards = useMemo(() => hubCards.filter(item => item.closed), [hubCards])
+  const allCards = hubCards
+
   const visibleTabs = useMemo(() => {
     const tabs = []
-    if (!adminView) tabs.push({ key: 'assigned', label: 'Assigned to Me', count: hubCards.filter(item => item.isAssigned && !item.closed).length })
-    if (auditorView || adminView) tabs.push({ key: 'raised', label: 'Raised by Me', count: hubCards.filter(item => item.isRaisedByMe).length })
-    tabs.push({ key: 'collaboration', label: 'Collaboration', count: hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)).length })
-    if (reviewerView || adminView) tabs.push({ key: 'review', label: 'Review Queue', count: hubCards.filter(item => item.reviewReady).length })
+    if (!adminView) tabs.push({ key: 'assigned', label: 'Assigned to Me', count: assignedCards.length })
+    if (auditorView || adminView) tabs.push({ key: 'raised', label: 'Raised by Me', count: raisedCards.length })
+    tabs.push({ key: 'collaboration', label: 'Collaboration', count: collaborationCards.length })
+    if (reviewerView || adminView) tabs.push({ key: 'review', label: 'Review Queue', count: reviewCards.length })
     if (expenseApproverView) tabs.push({ key: 'expense', label: 'Expense Approvals', count: hubCards.filter(item => item.expensePending).length })
-    tabs.push({ key: 'completed', label: 'Completed / Closed', count: hubCards.filter(item => item.closed).length })
-    if (adminView) tabs.push({ key: 'all', label: 'All NG Actions', count: hubCards.length })
+    tabs.push({ key: 'completed', label: 'Completed / Closed', count: completedCards.length })
+    if (adminView) tabs.push({ key: 'all', label: 'All NG Actions', count: allCards.length })
     return tabs
-  }, [adminView, auditorView, reviewerView, expenseApproverView, hubCards])
+  }, [adminView, auditorView, reviewerView, expenseApproverView, assignedCards, raisedCards, collaborationCards, reviewCards, completedCards, allCards, hubCards])
 
   useEffect(() => {
     if (visibleTabs.length && !visibleTabs.some(tab => tab.key === activeTab)) setActiveTab(visibleTabs[0].key)
   }, [activeTab, visibleTabs])
+
+  useEffect(() => {
+    if (!auditorView || activeTab !== 'assigned') return
+    if (assignedCards.length || !raisedCards.length) return
+    if (visibleTabs.some(tab => tab.key === 'raised')) setActiveTab('raised')
+  }, [activeTab, auditorView, assignedCards.length, raisedCards.length, visibleTabs])
 
   const hubRows = useMemo(() => {
     if (activeTab === 'raised') return hubCards.filter(item => item.isRaisedByMe)
@@ -405,7 +393,7 @@ export default function ActionCenter() {
     if (activeTab === 'expense') return hubCards.filter(item => item.expensePending)
     if (activeTab === 'completed') return hubCards.filter(item => item.closed)
     if (activeTab === 'all') return hubCards
-    return hubCards.filter(item => (adminView || item.isAssigned) && !item.closed)
+    return adminView ? hubCards.filter(item => !item.closed) : hubCards.filter(item => item.isAssigned && !item.closed)
   }, [activeTab, adminView, hubCards])
 
   const filteredPeople = useMemo(() => {
