@@ -133,7 +133,7 @@ function getPendingReasons(item) {
   const reasons = []
   if (!item.result) reasons.push('Result not selected')
   if (item.result === 'NG' && !String(item.currentCondition || '').trim()) reasons.push('Current Condition / Gap Observed missing')
-  if (item.result === 'NG' && !String(item.picForNg || '').trim()) reasons.push('PIC for NG missing')
+  if (item.result === 'NG' && !String(item.picForNgUserId || item.picForNg || '').trim()) reasons.push('PIC for NG missing')
   if (item.result === 'NG' && !String(item.tentative_closing_date || item.tentativeClosingDate || '').trim()) reasons.push('Tentative Closing Date missing')
   return reasons
 }
@@ -215,18 +215,30 @@ function getTentativeClosingDate(item) {
   return normalizeDraftDate(item?.tentative_closing_date || item?.tentativeClosingDate || '')
 }
 
+function normalizeDraftValue(value) {
+  return value === undefined ? null : value
+}
+
 function buildDraftPayload(items, auditId, respondedBy) {
   return items.map(item => ({
     audit_id: auditId,
-    checklist_id: item.dbId,
-    result: item.result || null,
+    checklist_id: normalizeDraftValue(item.dbId),
+    dq_question_num: normalizeDraftValue(item.dqQuestionNum || item.id || null),
+    sub_question_num: normalizeDraftValue(Number.isFinite(item.displaySubQuestionNum) ? String(item.displaySubQuestionNum) : Number.isFinite(item.subQuestionNum) ? String(item.subQuestionNum) : null),
+    sub_question_text: normalizeDraftValue(cleanQuestion(item.evaluationQuestion || item.question || '')) || null,
+    result: normalizeDraftValue(item.result || null),
+    current_condition_observed: String(item.currentCondition || '').trim() || null,
     observation: String(item.currentCondition || '').trim() || null,
-    comments: null,
-    responded_by: respondedBy,
-    pic_for_ng: String(item.picForNg || '').trim() || null,
+    comments: String(item.gapIdentified || '').trim() || null,
+    audit_location: normalizeDraftValue(item.auditLocation || null),
+    audit_department: normalizeDraftValue(item.auditDepartment || null),
+    responded_by: normalizeDraftValue(respondedBy),
+    pic_for_ng_user_id: normalizeDraftValue(item.picForNgUserId || null),
+    pic_for_ng_name: normalizeDraftValue(item.picForNgName || item.picForNg || null),
+    pic_for_ng: normalizeDraftValue(item.picForNgName || item.picForNg || null),
     tentative_closing_date: getTentativeClosingDate(item) || null,
     evidence_files: Array.isArray(item.evidenceFiles) ? item.evidenceFiles : [],
-  }))
+  })).map(record => Object.fromEntries(Object.entries(record).map(([key, value]) => [key, value === undefined ? null : value])))
 }
 
 function mergeDraftRows(items, rows) {
@@ -234,13 +246,17 @@ function mergeDraftRows(items, rows) {
   return items.map(item => {
     const row = rowsByChecklist.get(item.dbId)
     if (!row) return item
-    const combinedCondition = combineCurrentConditionAndGap(row.observation || '', row.comments || '')
+    const combinedCondition = combineCurrentConditionAndGap(row.current_condition_observed || row.observation || '', row.comments || '')
     return {
       ...item,
       result: row.result || '',
       currentCondition: combinedCondition,
       gapIdentified: row.comments || '',
-      picForNg: row.pic_for_ng || '',
+      auditLocation: row.audit_location || item.auditLocation || '',
+      auditDepartment: row.audit_department || item.auditDepartment || '',
+      picForNg: row.pic_for_ng_user_id || row.pic_for_ng || '',
+      picForNgUserId: row.pic_for_ng_user_id || '',
+      picForNgName: row.pic_for_ng_name || row.pic_for_ng || '',
       tentative_closing_date: normalizeDraftDate(row.tentative_closing_date),
       evidenceFiles: Array.isArray(row.evidence_files) ? row.evidence_files : [],
       evidenceUploaded: Array.isArray(row.evidence_files) ? row.evidence_files.length > 0 : Boolean(item.evidenceUploaded),
@@ -306,7 +322,7 @@ function ReviewSnapshot({ groups, activeGroup, onJumpToDq }) {
                 <span>{cleanQuestion(item.evaluationQuestion || item.question)}</span>
                 <span>{item.result || '-'}</span>
                 <span>{item.currentCondition || '-'}</span>
-                <span>{item.picForNg || '-'}</span>
+                <span>{item.picForNgName || item.picForNg || '-'}</span>
               </div>
             ))}
           </div>
@@ -390,12 +406,17 @@ export default function ConductAudit() {
   const currentAudit = audits.find(item => item.id === id) || audits.find(item => isInProgressAuditStatus(item.status)) || audits[0]
   const auditId = currentAudit?.id || id || ''
   const canDeleteCurrentAudit = useMemo(() => canDeleteAudit(user, currentAudit), [user, currentAudit])
+  const currentAuditDepartments = useMemo(
+    () => splitDelimitedValues(currentAudit?.departments || currentAudit?.department),
+    [currentAudit?.departments, currentAudit?.department],
+  )
+  const currentAuditLocation = currentAudit?.location || ''
   const selectedAuditDepartments = useMemo(
-    () => splitDelimitedValues(currentAudit?.departments || currentAudit?.department)
+    () => currentAuditDepartments
       .flatMap(part => checklistDepartmentAliases(part))
       .map(part => normalizeText(part))
       .filter(Boolean),
-    [currentAudit?.departments, currentAudit?.department],
+    [currentAuditDepartments],
   )
   const selectedAuditLocation = useMemo(() => normalizeText(currentAudit?.location), [currentAudit?.location])
   const viewMode = searchParams.get('view') || 'audit'
@@ -418,6 +439,10 @@ export default function ConductAudit() {
       evidenceUploaded: Boolean(item.evidenceUploaded),
       evidenceFiles: item.evidenceFiles || [],
       picForNg: item.picForNg || '',
+      picForNgUserId: item.picForNgUserId || '',
+      picForNgName: item.picForNgName || '',
+      auditLocation: currentAudit?.location || '',
+      auditDepartment: currentAuditDepartments.join(', ') || '',
       tentative_closing_date: getTentativeClosingDate(item),
       remarks: item.remarks || '',
     }))
@@ -456,7 +481,7 @@ export default function ConductAudit() {
             const locations = [...new Set(mappings.map(item => item.location).filter(Boolean))]
             return {
               id: userRow.id,
-              value: userRow.employee_name || userRow.mobile_no || userRow.id,
+              value: userRow.id,
               label: buildPicLabel({
                 employee_name: userRow.employee_name,
                 role: primaryMapping.role || userRow.user_type || 'PIC',
@@ -528,7 +553,7 @@ export default function ConductAudit() {
         const client = requireSupabase()
         const { data, error: loadError } = await client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, result, observation, comments, pic_for_ng, tentative_closing_date, evidence_files, updated_at')
+          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, audit_department, pic_for_ng, pic_for_ng_user_id, pic_for_ng_name, tentative_closing_date, evidence_files, responded_by, updated_at')
           .eq('audit_id', auditId)
 
         if (loadError) throw loadError
@@ -580,8 +605,6 @@ export default function ConductAudit() {
 
   useEffect(() => {
     if (!items.length || !auditId) return
-    const currentAuditLocation = currentAudit?.location || ''
-    const currentAuditDepartments = splitDelimitedValues(currentAudit?.departments || currentAudit?.department)
     items.forEach(item => {
       if (item.result === 'NG') {
         upsertAutoCapa({ auditId, auditLocation: currentAuditLocation, auditDepartments: currentAuditDepartments, question: item, remarks: item.remarks, currentCondition: item.currentCondition, gapIdentified: '', evidenceUploaded: item.evidenceUploaded })
@@ -672,12 +695,13 @@ export default function ConductAudit() {
     setDraftSaving(true)
     try {
       const client = requireSupabase()
+      console.log('Save Draft payload', draftPayload)
       logAuditSaveContext({
         operation: 'upsert',
         table: 'audit_responses',
         user,
         auditId,
-        auditLocation: currentAudit?.location || '',
+        auditLocation: currentAuditLocation,
         auditDepartments: currentAuditDepartments || [],
         payload: draftPayload,
       })
@@ -692,12 +716,13 @@ export default function ConductAudit() {
       lastDraftErrorRef.current = ''
       return true
     } catch (saveError) {
+      console.log('Save Draft error', saveError)
       logAuditSaveContext({
         operation: 'upsert',
         table: 'audit_responses',
         user,
         auditId,
-        auditLocation: currentAudit?.location || '',
+        auditLocation: currentAuditLocation,
         auditDepartments: currentAuditDepartments || [],
         payload: draftPayload,
         error: saveError,
@@ -773,6 +798,7 @@ export default function ConductAudit() {
   }
 
   async function handleNextDq() {
+    console.log('Next DQ clicked')
     if (currentDqIndex < 0) {
       setError('Unable to determine current DQ.')
       return
@@ -788,30 +814,28 @@ export default function ConductAudit() {
     const pendingItems = dqItems
       .map((item, index) => ({ item, index, reasons: getPendingReasons(item) }))
       .filter(entry => entry.reasons.length)
+    const pendingList = pendingItems.map(entry => ({
+      item: entry.item,
+      reasons: entry.reasons,
+      subQuestionNum: getQuestionLabel(entry.item, entry.index),
+      subQuestionText: cleanQuestion(entry.item.evaluationQuestion || entry.item.question),
+    }))
 
     if (pendingItems.length) {
-      const pendingMessage = formatPendingListMessage(pendingItems.map(entry => ({
-        item: entry.item,
-        reasons: entry.reasons,
-        subQuestionNum: getQuestionLabel(entry.item, entry.index),
-        subQuestionText: cleanQuestion(entry.item.evaluationQuestion || entry.item.question),
-      })), activeGroup?.code || selectedDqFromUrl || dqItems[0]?.dqQuestionNum || '')
+      console.log('Validation pending', pendingList)
+      const pendingMessage = formatPendingListMessage(pendingList, activeGroup?.code || selectedDqFromUrl || dqItems[0]?.dqQuestionNum || '')
       setError(pendingMessage)
       setPendingDialog({
         nextCode,
-        pendingItems: pendingItems.map(entry => ({
-          item: entry.item,
-          reasons: entry.reasons,
-          subQuestionNum: getQuestionLabel(entry.item, entry.index),
-          subQuestionText: cleanQuestion(entry.item.evaluationQuestion || entry.item.question),
-        })),
+        pendingItems: pendingList,
       })
       return
     }
 
+    console.log('Next DQ target', nextCode)
     const saveResult = await persistDraftResponses(false)
     if (!saveResult) {
-      if (!error) setError('Unable to save draft before moving to next DQ.')
+      setError(lastDraftErrorRef.current || 'Unable to save draft before moving to next DQ.')
       return
     }
     openDqGroup(nextCode)
@@ -910,9 +934,9 @@ export default function ConductAudit() {
     return matches.length ? matches : picOptions
   }, [picOptions, activeItem, selectedAuditLocation])
 
-  const getSelectedPicOption = item => relevantPicOptions.find(option => option.value === item.picForNg || option.id === item.picForNg || option.employee_name === item.picForNg) || null
+  const getSelectedPicOption = item => relevantPicOptions.find(option => option.id === item.picForNgUserId || option.value === item.picForNgUserId || option.id === item.picForNg || option.value === item.picForNg || option.employee_name === item.picForNgName || option.employee_name === item.picForNg) || null
   const getWhatsAppDetails = item => {
-    if (item.result !== 'NG' || !item.picForNg) return null
+    if (item.result !== 'NG' || !(item.picForNgUserId || item.picForNg)) return null
     const selectedPic = getSelectedPicOption(item)
     if (!selectedPic?.mobile_no) return { missingMobile: true, selectedPic }
     const message = buildWhatsAppMessage({
@@ -1024,7 +1048,7 @@ export default function ConductAudit() {
     <section className="audit-questions-panel">
       {dqItems.map((item, index) => {
         const pending = getPendingReasons(item)
-        const whatsappDetails = item.result === 'NG' && item.picForNg ? getWhatsAppDetails(item) : null
+        const whatsappDetails = item.result === 'NG' && (item.picForNgUserId || item.picForNg) ? getWhatsAppDetails(item) : null
         const statusLabel = item.result || 'Pending'
         return <article data-audit-row={item.dbId} data-result={statusLabel} key={`${item.dqQuestionNum || item.id || 'DQ'}-${Number.isFinite(item.displaySubQuestionNum) ? item.displaySubQuestionNum : Number.isFinite(item.subQuestionNum) ? item.subQuestionNum : 'NA'}-${item.dbId}`} className={`audit-question-card card ${activeItem?.dbId === item.dbId ? 'active' : ''} ${pending.length ? 'pending' : ''} result-${normalizeText(statusLabel)}`} onClick={() => setActiveId(item.dbId)}>
           <div className="audit-question-card-grid">
@@ -1046,7 +1070,14 @@ export default function ConductAudit() {
               <textarea className="audit-inline-textarea audit-condition-textarea" rows="3" value={item.currentCondition || ''} placeholder="Current Condition / Gap Observed" onClick={event => event.stopPropagation()} onChange={event => updateItem(item.dbId, { currentCondition: event.target.value, gapIdentified: '' })} />
               <div className="audit-question-ng-fields">
                 <EvidenceUploadCard item={item} onUpdate={updates => updateItem(item.dbId, updates)} />
-                <select className="audit-inline-select" value={item.picForNg || ''} onClick={event => event.stopPropagation()} onChange={event => updateItem(item.dbId, { picForNg: event.target.value })}>
+                <select className="audit-inline-select" value={item.picForNgUserId || ''} onClick={event => event.stopPropagation()} onChange={event => {
+                  const selectedPic = relevantPicOptions.find(option => option.id === event.target.value) || null
+                  updateItem(item.dbId, {
+                    picForNg: selectedPic?.id || event.target.value,
+                    picForNgUserId: selectedPic?.id || event.target.value,
+                    picForNgName: selectedPic?.label || selectedPic?.employee_name || selectedPic?.value || '',
+                  })
+                }}>
                   <option value="">Select PIC</option>
                   {relevantPicOptions.map(option => <option key={option.id} value={option.value}>{option.label || option.value}</option>)}
                 </select>
@@ -1054,7 +1085,7 @@ export default function ConductAudit() {
                   <span>Tentative Closing Date</span>
                   <input className="audit-inline-date" type="date" value={getTentativeClosingDate(item)} onChange={event => updateItem(item.dbId, { tentative_closing_date: event.target.value, tentativeClosingDate: event.target.value })} />
                 </label>}
-                {whatsappDetails && item.result === 'NG' && item.picForNg && (() => {
+                {whatsappDetails && item.result === 'NG' && (item.picForNgUserId || item.picForNg) && (() => {
                   if (whatsappDetails.missingMobile) return <small className="audit-pic-help">PIC mobile number not available</small>
                   return <a
                     className="secondary-button audit-whatsapp-link"

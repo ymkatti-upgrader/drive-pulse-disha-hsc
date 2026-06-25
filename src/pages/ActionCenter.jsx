@@ -1,8 +1,10 @@
 import { AlertTriangle, ArrowRight, Bell, CheckCircle2, Clock3, Filter, ShieldAlert, Target, TrendingUp } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../auth/AuthContext'
 import { PageHeader, StatusBadge } from '../components/UI'
 import { useNotifications } from '../notifications/NotificationContext'
+import { requireSupabase } from '../supabaseClient'
 
 const filters = ['Today', 'This Week', 'Overdue', 'Critical']
 
@@ -36,8 +38,12 @@ function NotificationRow({ item, onOpen }) {
 
 export default function ActionCenter() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { notifications, markRead } = useNotifications()
   const [filter, setFilter] = useState('Today')
+  const [assignedNgItems, setAssignedNgItems] = useState([])
+  const [assignedLoading, setAssignedLoading] = useState(false)
+  const [assignedError, setAssignedError] = useState('')
 
   const filtered = useMemo(() => {
     const now = new Date()
@@ -60,6 +66,71 @@ export default function ActionCenter() {
     audits: filtered.filter(item => item.category === 'Audit Notifications'),
   }), [filtered])
 
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadAssignedNgItems() {
+      if (!user?.id) {
+        setAssignedNgItems([])
+        return
+      }
+
+      setAssignedLoading(true)
+      setAssignedError('')
+      try {
+        const client = requireSupabase()
+        const [idMatch, legacyMatch] = await Promise.all([
+          client
+            .from('audit_responses')
+            .select('id, audit_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng, result, updated_at, audit_location, audit_department')
+            .eq('result', 'NG')
+            .eq('pic_for_ng_user_id', user.id),
+          Promise.resolve(user.mobile_no || user.employee_name ? client
+            .from('audit_responses')
+            .select('id, audit_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng, result, updated_at, audit_location, audit_department')
+            .eq('result', 'NG')
+            .in('pic_for_ng', [user.mobile_no, user.employee_name].filter(Boolean)) : { data: [], error: null }),
+        ])
+
+        if (idMatch.error) throw idMatch.error
+        if (legacyMatch.error) throw legacyMatch.error
+
+        const merged = new Map()
+        ;[...(idMatch.data || []), ...(legacyMatch.data || [])].forEach(item => {
+          if (!merged.has(item.id)) merged.set(item.id, item)
+        })
+
+        if (!cancelled) setAssignedNgItems([...merged.values()])
+      } catch (error) {
+        if (!cancelled) {
+          setAssignedNgItems([])
+          setAssignedError(error?.message || 'Unable to load assigned NG items.')
+        }
+      } finally {
+        if (!cancelled) setAssignedLoading(false)
+      }
+    }
+
+    loadAssignedNgItems()
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id, user?.mobile_no, user?.employee_name])
+
+  const assignedNgCards = useMemo(() => assignedNgItems.map(item => ({
+    id: item.id,
+    auditId: item.audit_id || '-',
+    location: item.audit_location || '-',
+    department: item.audit_department || '-',
+    dq: item.dq_question_num || '-',
+    subQuestion: item.sub_question_num || '-',
+    question: item.sub_question_text || '-',
+    condition: item.current_condition_observed || '-',
+    closingDate: item.tentative_closing_date || '-',
+    pic: item.pic_for_ng_name || item.pic_for_ng || '-',
+    status: item.result || 'NG',
+  })), [assignedNgItems])
+
   function openNotification(item) {
     markRead(item.id)
     navigate(item.actionLink)
@@ -79,6 +150,31 @@ export default function ActionCenter() {
       <ActionCard title="My Approvals" count={grouped.approvals.length} meta="Waiting decisions" tone="amber" icon={ShieldAlert} onClick={() => setFilter('This Week')} />
       <ActionCard title="My Verifications" count={grouped.verifications.length} meta="Auditor review queue" tone="green" icon={CheckCircle2} onClick={() => navigate('/verification')} />
       <ActionCard title="My Audits" count={grouped.audits.length} meta="Audit workload" tone="blue" icon={Clock3} onClick={() => navigate('/audits/new')} />
+    </section>
+
+    <section className="card action-section-card">
+      <div className="panel-head"><div><span className="eyebrow">ASSIGNED NG</span><h2>NG items assigned to me</h2></div><Bell /></div>
+      {assignedLoading ? <div className="action-empty">Loading assigned NG items...</div> : assignedError ? <div className="action-empty">{assignedError}</div> : assignedNgCards.length === 0 ? <div className="action-empty">No assigned NG items found.</div> : <div className="audit-review-table">
+        <div className="audit-review-row head">
+          <span>Audit</span>
+          <span>DQ</span>
+          <span>Sub</span>
+          <span>Question</span>
+          <span>Condition</span>
+        </div>
+        {assignedNgCards.map(item => <button key={item.id} className="action-row" onClick={() => navigate(`/audits/${item.auditId}/conduct${item.dq !== '-' ? `?dq=${encodeURIComponent(item.dq)}` : ''}`)}>
+          <div className="action-priority critical">{item.status}</div>
+          <div className="action-main">
+            <div><strong>{item.auditId}</strong><StatusBadge>{item.pic}</StatusBadge></div>
+            <p>{item.location} · {item.department}</p>
+            <small>{item.dq} · Q{item.subQuestion}</small>
+            <small>{item.question}</small>
+            <small>{item.condition}</small>
+            <small>{item.closingDate}</small>
+          </div>
+          <ArrowRight size={16} />
+        </button>)}
+      </div>}
     </section>
 
     <section className="action-sections-grid">

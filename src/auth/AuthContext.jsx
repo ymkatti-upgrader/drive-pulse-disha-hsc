@@ -1,8 +1,15 @@
 import { createContext, useContext, useMemo, useState } from 'react'
-import { requireSupabase } from '../supabaseClient'
+import { supabase } from '../supabaseClient'
 
 const AUTH_KEY = 'current_user'
 const LEGACY_AUTH_KEY = 'disha-hsc-auth'
+const SESSION_STORAGE_KEYS = [
+  AUTH_KEY,
+  LEGACY_AUTH_KEY,
+  'disha-hsc-notification-reads',
+  'disha-hsc-audit-creation-draft',
+]
+const SESSION_STORAGE_PREFIXES = ['disha-hsc-audit-draft:']
 export const DEFAULT_PASSWORD = 'Welcome@123'
 
 export const mockRoles = [
@@ -41,6 +48,26 @@ function readJson(key, fallback) {
 
 function readStoredUser() {
   return readJson(AUTH_KEY, null) || readJson(LEGACY_AUTH_KEY, null)
+}
+
+function clearSessionStorage() {
+  SESSION_STORAGE_KEYS.forEach(key => {
+    localStorage.removeItem(key)
+  })
+
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index)
+    if (!key) continue
+    if (SESSION_STORAGE_PREFIXES.some(prefix => key.startsWith(prefix))) {
+      localStorage.removeItem(key)
+    }
+  }
+
+  try {
+    sessionStorage.clear()
+  } catch {
+    // Ignore browsers that block sessionStorage access.
+  }
 }
 
 function normalizeMobile(value) {
@@ -347,10 +374,18 @@ export function AuthProvider({ children }) {
         return nextUser
       })
     },
-    logout() {
-      localStorage.removeItem(AUTH_KEY)
-      localStorage.removeItem(LEGACY_AUTH_KEY)
-      setUser(null)
+    async logout() {
+      try {
+        if (supabase) {
+          const { data } = await supabase.auth.getSession()
+          if (data?.session) await supabase.auth.signOut()
+        }
+      } catch (error) {
+        console.error('Supabase sign out failed', error)
+      } finally {
+        clearSessionStorage()
+        setUser(null)
+      }
     },
   }), [user, users])
 

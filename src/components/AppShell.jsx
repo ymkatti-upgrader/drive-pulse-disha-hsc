@@ -56,8 +56,11 @@ export default function AppShell() {
   })
   const isMoreRoute = ['/verification', '/yokoten', '/masters', '/action-center', '/management-review', '/audits'].some(path => location.pathname.startsWith(path))
 
-  function handleLogout() {
-    logout()
+  async function handleLogout() {
+    await logout()
+    setSidebarOpen(false)
+    setMoreOpen(false)
+    setNotificationOpen(false)
     navigate('/login', { replace: true })
   }
 
