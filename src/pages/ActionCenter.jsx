@@ -8,6 +8,16 @@ import { useNotifications } from '../notifications/NotificationContext'
 import { requireSupabase } from '../supabaseClient'
 
 const filters = ['Today', 'This Week', 'Overdue', 'Critical']
+const emptyActionForm = {
+  rootCause: '',
+  correctiveActionPlan: '',
+  preventiveActionPlan: '',
+  actionTaken: '',
+  closureRemarks: '',
+  actualClosureDate: '',
+  status: 'Open',
+  closureEvidenceFiles: [],
+}
 
 function categoryTone(category) {
   if (category.includes('Audit')) return 'blue'
@@ -46,6 +56,11 @@ export default function ActionCenter() {
   const [assignedNgItems, setAssignedNgItems] = useState([])
   const [assignedLoading, setAssignedLoading] = useState(false)
   const [assignedError, setAssignedError] = useState('')
+  const [editingNgId, setEditingNgId] = useState('')
+  const [actionForm, setActionForm] = useState(emptyActionForm)
+  const [actionSaving, setActionSaving] = useState(false)
+  const [actionMessage, setActionMessage] = useState('')
+  const [refreshAssignedNg, setRefreshAssignedNg] = useState(0)
 
   const filtered = useMemo(() => {
     const now = new Date()
@@ -84,7 +99,7 @@ export default function ActionCenter() {
         const adminView = isSystemAdmin(user)
         let query = client
           .from('audit_responses')
-          .select('id, audit_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, updated_at, audit_location')
+          .select('id, audit_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, updated_at, audit_location, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date')
           .eq('result', 'NG')
           .not('status', 'in', '("Closed","Completed","closed","completed")')
 
@@ -114,7 +129,7 @@ export default function ActionCenter() {
     return () => {
       cancelled = true
     }
-  }, [user])
+  }, [user, refreshAssignedNg])
 
   const assignedNgCards = useMemo(() => assignedNgItems.map(item => ({
     id: item.id,
@@ -128,11 +143,96 @@ export default function ActionCenter() {
     closingDate: item.tentative_closing_date || '-',
     pic: item.pic_for_ng_name || item.pic_for_ng_user_id || '-',
     status: item.status || 'Open',
-  })), [assignedNgItems])
+    rootCause: item.root_cause || '',
+    correctiveActionPlan: item.corrective_action_plan || '',
+    preventiveActionPlan: item.preventive_action_plan || '',
+    actionTaken: item.action_taken || '',
+    closureRemarks: item.closure_remarks || '',
+    closureEvidenceFiles: Array.isArray(item.closure_evidence_files) ? item.closure_evidence_files : [],
+    actualClosureDate: item.actual_closure_date || '',
+  })), [assignedNgItems, audits])
 
   function openNotification(item) {
     markRead(item.id)
     navigate(item.actionLink)
+  }
+
+  function openActionForm(item) {
+    setEditingNgId(item.id)
+    setActionMessage('')
+    setActionForm({
+      rootCause: item.rootCause || '',
+      correctiveActionPlan: item.correctiveActionPlan || '',
+      preventiveActionPlan: item.preventiveActionPlan || '',
+      actionTaken: item.actionTaken || '',
+      closureRemarks: item.closureRemarks || '',
+      actualClosureDate: item.actualClosureDate || '',
+      status: item.status || 'Open',
+      closureEvidenceFiles: item.closureEvidenceFiles || [],
+    })
+  }
+
+  function updateActionForm(field, value) {
+    setActionForm(current => ({ ...current, [field]: value }))
+  }
+
+  function handleClosureEvidence(event) {
+    const files = Array.from(event.target.files || []).map(file => ({
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      capturedAt: new Date().toISOString(),
+    }))
+    if (files.length) {
+      setActionForm(current => ({ ...current, closureEvidenceFiles: [...(current.closureEvidenceFiles || []), ...files] }))
+    }
+    event.target.value = ''
+  }
+
+  function validateNgAction(nextStatus) {
+    const pending = []
+    if (nextStatus === 'Completed') {
+      if (!actionForm.correctiveActionPlan.trim()) pending.push('Corrective Action Plan missing')
+      if (!actionForm.actionTaken.trim() && !actionForm.closureRemarks.trim()) pending.push('Action Taken / Closure Remarks missing')
+      if (!actionForm.actualClosureDate) pending.push('Actual Closure Date missing')
+    }
+    return pending
+  }
+
+  async function saveNgAction(nextStatus = actionForm.status) {
+    if (!editingNgId || !user?.id) return
+    const pending = validateNgAction(nextStatus)
+    if (pending.length) {
+      setActionMessage(pending.join('\n'))
+      return
+    }
+
+    setActionSaving(true)
+    setActionMessage('')
+    try {
+      const client = requireSupabase()
+      const { error } = await client.rpc('submit_ng_action_closure', {
+        p_response_id: editingNgId,
+        p_user_id: user.id,
+        p_root_cause: actionForm.rootCause || null,
+        p_corrective_action_plan: actionForm.correctiveActionPlan || null,
+        p_preventive_action_plan: actionForm.preventiveActionPlan || null,
+        p_action_taken: actionForm.actionTaken || null,
+        p_closure_remarks: actionForm.closureRemarks || null,
+        p_actual_closure_date: actionForm.actualClosureDate || null,
+        p_status: nextStatus,
+        p_closure_evidence_files: actionForm.closureEvidenceFiles || [],
+      })
+      if (error) throw error
+      setActionMessage(nextStatus === 'Completed' ? 'Action submitted as Completed' : 'Action updated')
+      setActionForm(current => ({ ...current, status: nextStatus }))
+      setRefreshAssignedNg(current => current + 1)
+      if (nextStatus === 'Completed') setEditingNgId('')
+    } catch (error) {
+      setActionMessage(error?.message || 'Unable to update NG action.')
+    } finally {
+      setActionSaving(false)
+    }
   }
 
   return <div className="action-center-page">
@@ -161,7 +261,7 @@ export default function ActionCenter() {
           <span>Question</span>
           <span>Condition</span>
         </div>
-        {assignedNgCards.map(item => <button key={item.id} className="action-row" onClick={() => navigate(`/audits/${item.auditId}/conduct${item.dq !== '-' ? `?dq=${encodeURIComponent(item.dq)}` : ''}`)}>
+        {assignedNgCards.map(item => <div key={item.id} className="action-row">
           <div className="action-priority critical">{item.status}</div>
           <div className="action-main">
             <div><strong>{item.auditId}</strong><StatusBadge>{item.pic}</StatusBadge></div>
@@ -170,9 +270,51 @@ export default function ActionCenter() {
             <small>{item.question}</small>
             <small>{item.condition}</small>
             <small>{item.closingDate}</small>
+            {editingNgId === item.id && <div className="form-grid wide">
+              <label className="wide">Root Cause
+                <textarea rows="2" value={actionForm.rootCause} onChange={event => updateActionForm('rootCause', event.target.value)} placeholder="Enter root cause" />
+              </label>
+              <label className="wide">Corrective Action Plan
+                <textarea rows="2" value={actionForm.correctiveActionPlan} onChange={event => updateActionForm('correctiveActionPlan', event.target.value)} placeholder="Enter corrective action plan" />
+              </label>
+              <label className="wide">Preventive Action Plan
+                <textarea rows="2" value={actionForm.preventiveActionPlan} onChange={event => updateActionForm('preventiveActionPlan', event.target.value)} placeholder="Optional preventive action" />
+              </label>
+              <label className="wide">Action Taken
+                <textarea rows="2" value={actionForm.actionTaken} onChange={event => updateActionForm('actionTaken', event.target.value)} placeholder="Enter action taken" />
+              </label>
+              <label className="wide">Closure Remarks
+                <textarea rows="2" value={actionForm.closureRemarks} onChange={event => updateActionForm('closureRemarks', event.target.value)} placeholder="Enter closure remarks" />
+              </label>
+              <label>Status
+                <select value={actionForm.status} onChange={event => updateActionForm('status', event.target.value)}>
+                  <option>Open</option>
+                  <option>In Progress</option>
+                  <option>Completed</option>
+                </select>
+              </label>
+              <label>Actual Closure Date
+                <input type="date" value={actionForm.actualClosureDate} onChange={event => updateActionForm('actualClosureDate', event.target.value)} />
+              </label>
+              <label className="wide">Closure Evidence
+                <input type="file" multiple onChange={handleClosureEvidence} />
+                {(actionForm.closureEvidenceFiles || []).length > 0 && <small>{actionForm.closureEvidenceFiles.map(file => file.name || file).join(', ')}</small>}
+              </label>
+              {actionMessage && <div className="wide audit-checklist-note" role="alert"><span>{actionMessage}</span></div>}
+              <div className="wide form-footer">
+                <button className="secondary-button" type="button" onClick={() => setEditingNgId('')} disabled={actionSaving}>Cancel</button>
+                <div>
+                  <button className="secondary-button" type="button" onClick={() => saveNgAction(actionForm.status === 'Completed' ? 'Completed' : 'In Progress')} disabled={actionSaving}>Save Progress</button>
+                  <button className="primary-button" type="button" onClick={() => saveNgAction('Completed')} disabled={actionSaving}>Submit Completed</button>
+                </div>
+              </div>
+            </div>}
           </div>
-          <ArrowRight size={16} />
-        </button>)}
+          <div>
+            <button className="secondary-button" type="button" onClick={() => navigate(`/audits/${item.auditId}/conduct${item.dq !== '-' ? `?dq=${encodeURIComponent(item.dq)}` : ''}`)}>Open Audit</button>
+            <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Update Action</button>
+          </div>
+        </div>)}
       </div>}
     </section>
 
