@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState } from 'react'
-import { supabase } from '../supabaseClient'
+import { requireSupabase, supabase } from '../supabaseClient'
 
 const AUTH_KEY = 'current_user'
 const LEGACY_AUTH_KEY = 'disha-hsc-auth'
@@ -224,35 +224,43 @@ export function AuthProvider({ children }) {
     passwordRules,
     isAuthenticated: Boolean(user),
     async login(mobile, password) {
-      const client = requireSupabase()
-      const enteredMobile = normalizeMobile(mobile)
-      const enteredPassword = String(password).trim()
+      try {
+        const client = requireSupabase()
+        const enteredMobile = normalizeMobile(mobile)
+        const enteredPassword = String(password).trim()
 
-      const { count, error: countError } = await client
-        .from('app_users')
-        .select('id', { count: 'exact', head: true })
-      if (countError) return { ok: false, error: countError.message || 'Unable to read backend users.' }
-      if (!count) return { ok: false, error: 'No users found in backend. Please import Users Master.' }
+        const { count, error: countError } = await client
+          .from('app_users')
+          .select('id', { count: 'exact', head: true })
+        if (countError) return { ok: false, error: countError.message || 'Unable to read backend users.' }
+        if (!count) return { ok: false, error: 'No users found in backend. Please import Users Master.' }
 
-      const { data: matchedUser, error: userError } = await client
-        .from('app_users')
-        .select('id, employee_name, mobile_no, password, active')
-        .eq('mobile_no', enteredMobile)
-        .maybeSingle()
-      if (userError) return { ok: false, error: userError.message || 'Unable to validate login.' }
-      if (!matchedUser) return { ok: false, error: 'Mobile number not found in Users Master.' }
-      if (!matchedUser.active) return { ok: false, error: 'User is inactive. Please contact admin.' }
-      if (String(matchedUser.password || '').trim() !== enteredPassword) return { ok: false, error: 'Incorrect password.' }
+        const { data: matchedUser, error: userError } = await client
+          .from('app_users')
+          .select('id, employee_name, mobile_no, password, active')
+          .eq('mobile_no', enteredMobile)
+          .maybeSingle()
+        if (userError) return { ok: false, error: userError.message || 'Unable to validate login.' }
+        if (!matchedUser) return { ok: false, error: 'Mobile number not found in Users Master.' }
+        if (!matchedUser.active) return { ok: false, error: 'User is inactive. Please contact admin.' }
+        if (String(matchedUser.password || '').trim() !== enteredPassword) return { ok: false, error: 'Incorrect password.' }
 
-      const { data: mappings, error: mappingsError } = await client
-        .from('user_access_mappings')
-        .select('role, department, location, user_type')
-        .eq('user_id', matchedUser.id)
-        .eq('active', true)
-      if (mappingsError) return { ok: false, error: mappingsError.message || 'Unable to read user mappings.' }
+        const { data: mappings, error: mappingsError } = await client
+          .from('user_access_mappings')
+          .select('role, department, location, user_type')
+          .eq('user_id', matchedUser.id)
+          .eq('active', true)
+        if (mappingsError) return { ok: false, error: mappingsError.message || 'Unable to read user mappings.' }
 
-      const safeUser = persistSession(toSessionUser(matchedUser, mappings || []))
-      return { ok: true, user: safeUser, mustChangePassword: false }
+        const safeUser = persistSession(toSessionUser(matchedUser, mappings || []))
+        return { ok: true, user: safeUser, mustChangePassword: false }
+      } catch (error) {
+        const message = String(error?.message || '')
+        if (message.includes('Supabase is not configured')) {
+          return { ok: false, error: 'Supabase is not configured. Please contact administrator.' }
+        }
+        return { ok: false, error: message || 'Unable to connect to backend.' }
+      }
     },
     async changePassword(newPassword) {
       if (!user) return { ok: false, error: 'Session expired. Please sign in again.' }
