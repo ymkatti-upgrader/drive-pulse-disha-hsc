@@ -21,6 +21,71 @@ function normalizeText(value) {
   return String(value || '').trim().toLowerCase()
 }
 
+function cleanText(value) {
+  return String(value ?? '')
+    .replace(/[\u00c2\ufffd]/g, '')
+    .replace(/\u00c3\u201a/g, '')
+    .replace(/\s*\u00b7\s*/g, ' | ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*-\s*-\s*/g, ' - ')
+    .trim()
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim())
+}
+
+function formatDate(value) {
+  const text = cleanText(value)
+  if (!text || text === '-') return ''
+  return text.slice(0, 10)
+}
+
+function safeJoin(parts, separator = ' | ') {
+  return parts.map(cleanText).filter(part => part && part !== '-' && !isUuid(part)).join(separator)
+}
+
+function cleanDisplayValue(value, fallback = 'Not available') {
+  const text = cleanText(value)
+  if (!text || text === '-' || isUuid(text)) return fallback
+  return text
+}
+
+function shortDepartment(value) {
+  const text = cleanDisplayValue(value, '')
+  if (!text) return 'Not available'
+  const departments = text.split(',').map(part => cleanText(part)).filter(Boolean)
+  const visible = departments.slice(0, 2).join(', ')
+  return departments.length > 2 ? `${visible}...` : visible
+}
+
+function getDisplayName(value) {
+  const text = cleanText(value)
+  if (!text || isUuid(text)) return 'Not available'
+  return text.split(/\s*(?:\||\u00b7|,)\s*/).map(cleanText).find(part => part && !isUuid(part)) || 'Not available'
+}
+
+function getPicParts(value) {
+  const parts = cleanText(value).split(/\s*(?:\||\u00b7|,)\s*/).map(cleanText).filter(Boolean)
+  return {
+    name: getDisplayName(value),
+    role: parts.find(part => /pic|hod|admin|auditor|functional/i.test(part) && !isUuid(part)) || '',
+    location: parts.find(part => /^BL/i.test(part)) || '',
+  }
+}
+
+function getAuditDisplayId(value) {
+  const text = cleanText(value)
+  if (!text || isUuid(text)) return 'Not available'
+  return text
+}
+
+function getSubQuestionLabel(value) {
+  const text = cleanText(value).replace(/^Q/i, '')
+  if (!text || text === '-') return 'Not available'
+  return `Q${text}`
+}
+
 function auditBelongsToUser(audit, user) {
   if (!audit || !user) return false
   const userName = normalizeText(user.employee_name || user.name || user.full_name)
@@ -128,30 +193,35 @@ export default function ActionCenter() {
 
   const hubCards = useMemo(() => ngItems.map(item => {
     const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
-    const department = audit.department || (Array.isArray(audit.departments) ? audit.departments.join(', ') : audit.departments) || '-'
+    const fullDepartment = audit.department || (Array.isArray(audit.departments) ? audit.departments.join(', ') : audit.departments) || ''
+    const picParts = getPicParts(item.pic_for_ng_name || item.pic_for_ng_user_id || '')
     const card = {
       id: item.id,
-      auditId: item.audit_id || '-',
-      location: audit.location || item.audit_location || '-',
-      department,
-      auditType: audit.audit_type || audit.auditType || '-',
-      auditorName: audit.auditor_name || audit.auditorName || audit.owner || '-',
-      auditStartDate: audit.audit_start_date || audit.auditStartDate || audit.scheduledDate || audit.createdAt || '-',
-      dq: item.dq_question_num || '-',
-      subQuestion: item.sub_question_num || '-',
-      question: item.sub_question_text || '-',
-      condition: item.current_condition_observed || '-',
-      closingDate: item.tentative_closing_date || '-',
-      pic: item.pic_for_ng_name || item.pic_for_ng_user_id || '-',
-      status: item.status || 'Open',
-      rootCause: item.root_cause || '',
-      correctiveActionPlan: item.corrective_action_plan || '',
-      preventiveActionPlan: item.preventive_action_plan || '',
-      actionTaken: item.action_taken || '',
-      closureRemarks: item.closure_remarks || '',
+      rawAuditId: item.audit_id || '',
+      auditId: getAuditDisplayId(item.audit_id),
+      location: cleanDisplayValue(audit.location || item.audit_location),
+      department: shortDepartment(fullDepartment),
+      fullDepartment: cleanDisplayValue(fullDepartment),
+      auditType: cleanDisplayValue(audit.audit_type || audit.auditType),
+      auditorName: cleanDisplayValue(audit.auditor_name || audit.auditorName || audit.owner),
+      auditStartDate: formatDate(audit.audit_start_date || audit.auditStartDate || audit.scheduledDate || audit.createdAt) || 'Not available',
+      dq: cleanDisplayValue(item.dq_question_num),
+      subQuestion: getSubQuestionLabel(item.sub_question_num),
+      question: cleanDisplayValue(item.sub_question_text),
+      condition: cleanDisplayValue(item.current_condition_observed),
+      closingDate: formatDate(item.tentative_closing_date) || 'Not available',
+      pic: picParts.name,
+      picRole: picParts.role,
+      picLocation: picParts.location,
+      status: cleanDisplayValue(item.status, 'Open'),
+      rootCause: cleanText(item.root_cause),
+      correctiveActionPlan: cleanText(item.corrective_action_plan),
+      preventiveActionPlan: cleanText(item.preventive_action_plan),
+      actionTaken: cleanText(item.action_taken),
+      closureRemarks: cleanText(item.closure_remarks),
       closureEvidenceFiles: Array.isArray(item.closure_evidence_files) ? item.closure_evidence_files : [],
-      actualClosureDate: item.actual_closure_date || '',
-      completedAt: item.completed_at || '',
+      actualClosureDate: formatDate(item.actual_closure_date),
+      completedAt: formatDate(item.completed_at),
       completedBy: item.completed_by || '',
       respondedBy: item.responded_by || '',
       isAssigned: responseBelongsToPic(item, user),
@@ -306,32 +376,35 @@ export default function ActionCenter() {
           return <div key={item.id} className="action-row">
             <div className={`action-priority ${item.overdue ? 'critical' : item.completed ? 'normal' : 'high'}`}>{item.overdue ? 'Overdue' : item.status}</div>
             <div className="action-main">
-              <div><strong>{item.auditId}</strong><StatusBadge>{item.pic}</StatusBadge>{item.actualClosureDate && <StatusBadge>Closed {item.actualClosureDate}</StatusBadge>}</div>
-              <p>{item.location} Â· {item.department}</p>
-              <small>{item.dq} Â· Q{item.subQuestion}</small>
-              <small>{item.question}</small>
-              <small>{item.condition}</small>
-              <small>Target: {item.closingDate}{item.actualClosureDate ? ` Â· Actual: ${item.actualClosureDate}` : ''}</small>
+              <div><strong>Status: {item.status}</strong>{item.actualClosureDate && <StatusBadge>Closed {item.actualClosureDate}</StatusBadge>}</div>
+              <p>Audit: {item.auditId}</p>
+              <small>Location: {item.location}</small>
+              <small>Department: {item.department}</small>
+              <small>DQ: {safeJoin([item.dq, item.subQuestion])}</small>
+              <small>Question: {item.question}</small>
+              <small>Condition: {item.condition}</small>
+              <small>Assigned PIC: {item.pic}</small>
+              <small>Target Date: {item.closingDate}{item.actualClosureDate ? ` | Actual Closure Date: ${item.actualClosureDate}` : ''}</small>
               {detailNgId === item.id && <section className="capa-detail-fields">
-                <div><span>Audit ID</span><strong>{item.auditId}</strong></div>
+                <div><span>Audit</span><strong>{item.auditId}</strong></div>
                 <div><span>Location</span><strong>{item.location}</strong></div>
-                <div><span>Department</span><strong>{item.department}</strong></div>
+                <div><span>Department</span><strong>{item.fullDepartment}</strong></div>
                 <div><span>Auditor</span><strong>{item.auditorName}</strong></div>
                 <div><span>Audit Type</span><strong>{item.auditType}</strong></div>
                 <div><span>Audit Start Date</span><strong>{item.auditStartDate}</strong></div>
                 <div><span>DQ Number</span><strong>{item.dq}</strong></div>
-                <div><span>DQ Question</span><strong>{item.dq}</strong></div>
-                <div><span>Sub-question Number</span><strong>Q{item.subQuestion}</strong></div>
+                <div><span>Sub-question Number</span><strong>{item.subQuestion}</strong></div>
                 <div><span>Sub-question Text</span><strong>{item.question}</strong></div>
-                <div><span>Standard / Purpose</span><strong>-</strong></div>
                 <div><span>Assigned PIC</span><strong>{item.pic}</strong></div>
+                {item.picRole && <div><span>Role</span><strong>{item.picRole}</strong></div>}
+                {item.picLocation && <div><span>PIC Location</span><strong>{item.picLocation}</strong></div>}
                 <div><span>Current Condition / Gap Observed</span><strong>{item.condition}</strong></div>
                 <div><span>Tentative Closing Date</span><strong>{item.closingDate}</strong></div>
-                <div><span>Root Cause</span><strong>{item.rootCause || '-'}</strong></div>
-                <div><span>Corrective Action Plan</span><strong>{item.correctiveActionPlan || '-'}</strong></div>
-                <div><span>Preventive Action Plan</span><strong>{item.preventiveActionPlan || '-'}</strong></div>
-                <div><span>Action Taken / Closure Remarks</span><strong>{item.actionTaken || item.closureRemarks || '-'}</strong></div>
-                <div><span>Actual Closure Date</span><strong>{item.actualClosureDate || '-'}</strong></div>
+                <div><span>Root Cause</span><strong>{item.rootCause || 'Not available'}</strong></div>
+                <div><span>Corrective Action Plan</span><strong>{item.correctiveActionPlan || 'Not available'}</strong></div>
+                <div><span>Preventive Action Plan</span><strong>{item.preventiveActionPlan || 'Not available'}</strong></div>
+                <div><span>Action Taken / Closure Remarks</span><strong>{item.actionTaken || item.closureRemarks || 'Not available'}</strong></div>
+                <div><span>Actual Closure Date</span><strong>{item.actualClosureDate || 'Not available'}</strong></div>
                 <div><span>Current Status</span><strong>{item.status}</strong></div>
               </section>}
               {editingNgId === item.id && <section className="form-grid wide">
@@ -375,7 +448,7 @@ export default function ActionCenter() {
               </section>}
             </div>
             <div>
-              <button className="secondary-button" type="button" onClick={() => navigate(`/audits/${item.auditId}/conduct${item.dq !== '-' ? `?dq=${encodeURIComponent(item.dq)}` : ''}`)}>Open Audit</button>
+              <button className="secondary-button" type="button" onClick={() => navigate(`/audits/${item.rawAuditId}/conduct${item.dq !== 'Not available' ? `?dq=${encodeURIComponent(item.dq)}` : ''}`)}>Open Audit</button>
               <button className="secondary-button" type="button" onClick={() => setDetailNgId(current => current === item.id ? '' : item.id)}>View Details</button>
               {canUpdate ? <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Update Action</button> : <span className="action-empty">View only</span>}
             </div>
