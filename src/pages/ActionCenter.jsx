@@ -126,17 +126,22 @@ function hasRole(user, terms) {
   })
 }
 
+function getCurrentUserIds(currentUser) {
+  return [currentUser?.id, currentUser?.user_id].map(value => String(value || '').trim()).filter(Boolean)
+}
+
+function hasAssignedPic(row) {
+  return Boolean(row?.assigned_pic_user_id || row?.pic_for_ng_user_id || cleanText(row?.pic_for_ng_mobile))
+}
+
 function isAssignedToUser(row, currentUser) {
   if (!row || !currentUser) return false
-  const userId = currentUser.id || currentUser.user_id || ''
-  if (row.assigned_pic_user_id && row.assigned_pic_user_id === userId) return true
-  if (row.pic_for_ng_user_id && row.pic_for_ng_user_id === userId) return true
+  const userIds = getCurrentUserIds(currentUser)
+  if (row.assigned_pic_user_id && userIds.includes(row.assigned_pic_user_id)) return true
+  if (row.pic_for_ng_user_id && userIds.includes(row.pic_for_ng_user_id)) return true
   const rowMobile = normalizeMobile(row.pic_for_ng_mobile)
   const userMobile = normalizeMobile(currentUser.mobile_no || currentUser.mobile)
-  if (rowMobile && userMobile && rowMobile === userMobile) return true
-  const rowName = normalizeText(row.pic_for_ng_name || row.pic_for_ng)
-  const userName = normalizeText(currentUser.employee_name || currentUser.name || currentUser.full_name)
-  return Boolean(rowName && userName && rowName === userName)
+  return Boolean(rowMobile && userMobile && rowMobile === userMobile)
 }
 
 function isCollaboratorForUser(row, currentUser) {
@@ -272,11 +277,9 @@ function isValidNgAction(item, audit = {}) {
   if (!item || item.is_void === true) return false
   const hasWorkflowStatus = normalizeText(item.result) === 'ng' || hasMeaningfulValue(item.action_status) || hasMeaningfulValue(item.status)
   const hasQuestion = Boolean(resolveActionQuestion(item)) || hasMeaningfulValue(item.checklist_id) || hasMeaningfulValue(item.dq_question_num) || hasMeaningfulValue(item.sub_question_num)
-  const hasLocation = Boolean(resolveActionLocation(item, audit))
-  const hasDepartment = Boolean(resolveActionDepartment(item, audit))
-  const hasAssignedPic = Boolean(item.assigned_pic_user_id || item.pic_for_ng_user_id || cleanText(item.pic_for_ng_mobile))
+  const hasPicAssignment = hasAssignedPic(item)
   const hasAuditId = hasMeaningfulValue(item.audit_id)
-  return hasWorkflowStatus && hasQuestion && hasLocation && hasDepartment && hasAssignedPic && hasAuditId
+  return hasWorkflowStatus && hasQuestion && hasPicAssignment && hasAuditId
 }
 
 function getSimpleStatus(status, row = {}) {
@@ -409,12 +412,12 @@ export default function ActionCenter() {
           .from('audit_responses')
           .select(stableSelect)
           .eq('result', 'NG')
-          .eq('is_void', false)
         if (allNgResult.error) throw allNgResult.error
 
         if (!cancelled) {
           const fetchedRows = allNgResult.data || []
-          const validRows = fetchedRows.filter(item => {
+          const nonVoidRows = fetchedRows.filter(item => item.is_void !== true)
+          const validRows = nonVoidRows.filter(item => {
             const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
             return isValidNgAction(item, audit)
           })
@@ -426,7 +429,7 @@ export default function ActionCenter() {
           console.info('CURRENT USER', activeUser)
           console.info('FETCHED ROWS', {
             totalFetched: fetchedRows.length,
-            afterVoidFilter: fetchedRows.length,
+            afterVoidFilter: nonVoidRows.length,
           })
           console.info('VALID ROWS', {
             validCount: validRows.length,
