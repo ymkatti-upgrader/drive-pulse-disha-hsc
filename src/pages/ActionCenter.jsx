@@ -427,13 +427,28 @@ export default function ActionCenter() {
           console.info('FETCHED ROWS', {
             totalFetched: fetchedRows.length,
             afterVoidFilter: fetchedRows.length,
-            afterValidActionFilter: validRows.length,
+          })
+          console.info('VALID ROWS', {
+            validCount: validRows.length,
           })
           console.info('ASSIGNED ROWS', {
             assignedCount: assignedRows.length,
             currentUserId: activeUser.id || activeUser.user_id || '',
             currentUserMobile: normalizeMobile(activeUser.mobile_no || activeUser.mobile),
           })
+          console.info('FIRST 5 ROWS WITH ASSIGNMENT FIELDS', fetchedRows.slice(0, 5).map(row => ({
+            id: row.id,
+            audit_id: row.audit_id,
+            sub_question_text: row.sub_question_text,
+            audit_location: row.audit_location,
+            audit_department: row.audit_department,
+            assigned_pic_user_id: row.assigned_pic_user_id,
+            pic_for_ng_user_id: row.pic_for_ng_user_id,
+            pic_for_ng_name: row.pic_for_ng_name,
+            pic_for_ng_mobile: row.pic_for_ng_mobile,
+            action_status: row.action_status,
+            is_void: row.is_void,
+          })))
           setNgItems(validRows)
         }
       } catch (loadError) {

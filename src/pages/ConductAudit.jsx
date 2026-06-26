@@ -242,31 +242,44 @@ function shouldPersistAuditResponse(item, auditId) {
   return true
 }
 
+function getNgActionWorkflowStatus(item) {
+  if (item?.result !== 'NG') return null
+  return String(item?.picForNgUserId || item?.picForNgMobile || item?.picForNg || '').trim() ? 'Assigned' : 'Open'
+}
+
 function buildDraftPayload(items, auditId, respondedBy) {
-  return items.filter(item => shouldPersistAuditResponse(item, auditId)).map(item => ({
-    audit_id: auditId,
-    checklist_id: normalizeDraftValue(item.dbId),
-    dq_question_num: normalizeDraftValue(item.dqQuestionNum || item.id || null),
-    sub_question_num: normalizeDraftValue(Number.isFinite(item.displaySubQuestionNum) ? String(item.displaySubQuestionNum) : Number.isFinite(item.subQuestionNum) ? String(item.subQuestionNum) : null),
-    sub_question_text: normalizeDraftValue(cleanQuestion(item.evaluationQuestion || item.question || '')) || null,
-    result: normalizeDraftValue(item.result || null),
-    current_condition_observed: String(item.currentCondition || '').trim() || null,
-    observation: String(item.currentCondition || '').trim() || null,
-    comments: String(item.gapIdentified || '').trim() || null,
-    audit_location: normalizeDraftValue(item.auditLocation || null),
-    responded_by: normalizeDraftValue(respondedBy),
-    pic_for_ng_user_id: normalizeDraftValue(item.picForNgUserId || null),
-    assigned_pic_user_id: normalizeDraftValue(item.picForNgUserId || null),
-    pic_for_ng_name: normalizeDraftValue(item.picForNgName || item.picForNg || null),
-    pic_for_ng_mobile: normalizeDraftValue(item.picForNgMobile || null),
-    pic_for_ng: normalizeDraftValue(item.picForNgName || item.picForNg || null),
-    status: item.result === 'NG' ? 'Open' : null,
-    action_status: item.result === 'NG' ? 'Open' : null,
-    closure_status: item.result === 'NG' ? 'Open' : null,
-    verification_status: item.result === 'NG' ? 'Not Started' : null,
-    tentative_closing_date: getTentativeClosingDate(item) || null,
-    evidence_files: Array.isArray(item.evidenceFiles) ? item.evidenceFiles : [],
-  })).map(record => Object.fromEntries(Object.entries(record).map(([key, value]) => [key, value === undefined ? null : value])))
+  return items
+    .filter(item => shouldPersistAuditResponse(item, auditId))
+    .map(item => {
+      const actionStatus = getNgActionWorkflowStatus(item)
+      return {
+        audit_id: auditId,
+        checklist_id: normalizeDraftValue(item.dbId),
+        dq_question_num: normalizeDraftValue(item.dqQuestionNum || item.id || null),
+        sub_question_num: normalizeDraftValue(Number.isFinite(item.displaySubQuestionNum) ? String(item.displaySubQuestionNum) : Number.isFinite(item.subQuestionNum) ? String(item.subQuestionNum) : null),
+        sub_question_text: normalizeDraftValue(cleanQuestion(item.evaluationQuestion || item.question || '')) || null,
+        result: normalizeDraftValue(item.result || null),
+        current_condition_observed: String(item.currentCondition || '').trim() || null,
+        observation: String(item.currentCondition || '').trim() || null,
+        comments: String(item.gapIdentified || '').trim() || null,
+        audit_location: normalizeDraftValue(item.auditLocation || null),
+        audit_department: normalizeDraftValue(item.auditDepartment || null),
+        responded_by: normalizeDraftValue(respondedBy),
+        pic_for_ng_user_id: normalizeDraftValue(item.picForNgUserId || null),
+        assigned_pic_user_id: normalizeDraftValue(item.picForNgUserId || null),
+        pic_for_ng_name: normalizeDraftValue(item.picForNgName || item.picForNg || null),
+        pic_for_ng_mobile: normalizeDraftValue(item.picForNgMobile || null),
+        pic_for_ng: normalizeDraftValue(item.picForNgName || item.picForNg || null),
+        status: actionStatus,
+        action_status: actionStatus,
+        closure_status: item.result === 'NG' ? 'Open' : null,
+        verification_status: item.result === 'NG' ? 'Not Started' : null,
+        is_void: false,
+        tentative_closing_date: getTentativeClosingDate(item) || null,
+        evidence_files: Array.isArray(item.evidenceFiles) ? item.evidenceFiles : [],
+      }
+    })
+    .map(record => Object.fromEntries(Object.entries(record).map(([key, value]) => [key, value === undefined ? null : value])))
 }
 
 function mergeDraftRows(items, rows) {
@@ -281,6 +294,7 @@ function mergeDraftRows(items, rows) {
       currentCondition: combinedCondition,
       gapIdentified: row.comments || '',
       auditLocation: row.audit_location || item.auditLocation || '',
+      auditDepartment: row.audit_department || item.auditDepartment || '',
       picForNg: row.assigned_pic_user_id || row.pic_for_ng_user_id || row.pic_for_ng || '',
       picForNgUserId: row.assigned_pic_user_id || row.pic_for_ng_user_id || '',
       picForNgName: row.pic_for_ng_name || row.pic_for_ng || '',
@@ -485,6 +499,7 @@ export default function ConductAudit() {
       picForNgName: item.picForNgName || '',
       picForNgMobile: item.picForNgMobile || '',
       auditLocation: currentAudit?.location || '',
+      auditDepartment: splitDelimitedValues(currentAudit?.departments || currentAudit?.department).join(', '),
       tentative_closing_date: getTentativeClosingDate(item),
       remarks: item.remarks || '',
     }))
@@ -595,7 +610,7 @@ export default function ConductAudit() {
         const client = requireSupabase()
         const { data, error: loadError } = await client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at')
+          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, audit_department, pic_for_ng, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at')
           .eq('audit_id', auditId)
           .eq('is_void', false)
 
@@ -753,8 +768,22 @@ export default function ConductAudit() {
         auditDepartments: currentAuditDepartments || [],
         payload: draftPayload,
       })
-      const { error: saveError } = await client.from('audit_responses').upsert(draftPayload, { onConflict: 'audit_id,checklist_id' })
+      const { data: savedRows, error: saveError } = await client
+        .from('audit_responses')
+        .upsert(draftPayload, { onConflict: 'audit_id,checklist_id' })
+        .select('id, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_mobile, action_status')
       if (saveError) throw saveError
+      ;(savedRows || [])
+        .filter(row => row.assigned_pic_user_id || row.pic_for_ng_user_id || row.pic_for_ng_mobile)
+        .forEach(row => {
+          console.info('ASSIGNMENT SAVED', {
+            response_id: row.id,
+            assigned_pic_user_id: row.assigned_pic_user_id || '',
+            pic_for_ng_user_id: row.pic_for_ng_user_id || '',
+            pic_for_ng_mobile: row.pic_for_ng_mobile || '',
+            action_status: row.action_status || '',
+          })
+        })
       lastDraftSignatureRef.current = draftSignature
       if (draftStorageKey) localStorage.removeItem(draftStorageKey)
       if (showToast) {
@@ -832,6 +861,9 @@ export default function ConductAudit() {
     updateItem(dbId, {
       result,
       remarks: result === 'NA' ? '' : current.remarks || '',
+      status: result === 'NG'
+        ? (String(current.picForNgUserId || current.picForNgMobile || current.picForNg || '').trim() ? 'Assigned' : 'Open')
+        : '',
     })
   }
 
@@ -1135,11 +1167,13 @@ export default function ConductAudit() {
                 <EvidenceUploadCard item={item} disabled={isReadOnly} onUpdate={updates => updateItem(item.dbId, updates)} />
                 <select className="audit-inline-select" value={item.picForNgUserId || ''} disabled={isReadOnly} onClick={event => event.stopPropagation()} onChange={event => {
                   const selectedPic = relevantPicOptions.find(option => option.id === event.target.value) || null
+                  const nextActionStatus = event.target.value ? 'Assigned' : (item.result === 'NG' ? 'Open' : '')
                   updateItem(item.dbId, {
                     picForNg: selectedPic?.id || event.target.value,
                     picForNgUserId: selectedPic?.id || event.target.value,
                     picForNgName: selectedPic?.label || selectedPic?.employee_name || selectedPic?.value || '',
                     picForNgMobile: selectedPic?.mobile_no || '',
+                    status: nextActionStatus,
                   })
                 }}>
                   <option value="">Select PIC</option>
