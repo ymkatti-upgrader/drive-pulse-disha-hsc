@@ -160,6 +160,73 @@ WHERE action_status IS NULL
     OR nullif(btrim(coalesce(pic_for_ng_mobile, '')), '') IS NOT NULL
   );
 
+UPDATE audit_responses
+SET
+  assigned_pic_user_id = coalesce(assigned_pic_user_id, pic_for_ng_user_id),
+  action_status = 'Assigned',
+  updated_at = now()
+WHERE is_void IS NOT TRUE
+  AND (
+    assigned_pic_user_id IS NOT NULL
+    OR pic_for_ng_user_id IS NOT NULL
+    OR nullif(btrim(coalesce(pic_for_ng_mobile, '')), '') IS NOT NULL
+  )
+  AND (
+    assigned_pic_user_id IS DISTINCT FROM coalesce(assigned_pic_user_id, pic_for_ng_user_id)
+    OR coalesce(nullif(btrim(coalesce(action_status, '')), ''), '') <> 'Assigned'
+  );
+
+CREATE OR REPLACE FUNCTION public.normalize_ng_assignment_fields()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_assignment_exists boolean;
+BEGIN
+  v_assignment_exists := (
+    NEW.assigned_pic_user_id IS NOT NULL
+    OR NEW.pic_for_ng_user_id IS NOT NULL
+    OR nullif(btrim(coalesce(NEW.pic_for_ng_mobile, '')), '') IS NOT NULL
+  );
+
+  IF v_assignment_exists THEN
+    NEW.assigned_pic_user_id := coalesce(NEW.assigned_pic_user_id, NEW.pic_for_ng_user_id);
+    NEW.action_status := 'Assigned';
+    NEW.updated_at := now();
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_normalize_ng_assignment_fields ON audit_responses;
+
+CREATE TRIGGER trg_normalize_ng_assignment_fields
+BEFORE INSERT OR UPDATE ON audit_responses
+FOR EACH ROW
+EXECUTE FUNCTION public.normalize_ng_assignment_fields();
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'audit_responses_assignment_requires_action_status'
+  ) THEN
+    ALTER TABLE audit_responses
+      ADD CONSTRAINT audit_responses_assignment_requires_action_status
+      CHECK (
+        NOT (
+          assigned_pic_user_id IS NOT NULL
+          OR pic_for_ng_user_id IS NOT NULL
+          OR nullif(btrim(coalesce(pic_for_ng_mobile, '')), '') IS NOT NULL
+        )
+        OR coalesce(nullif(btrim(coalesce(action_status, '')), ''), '') <> ''
+      );
+  END IF;
+END
+$$;
+
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('quotation-files', 'quotation-files', true)
 ON CONFLICT (id) DO UPDATE
