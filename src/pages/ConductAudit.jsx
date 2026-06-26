@@ -233,10 +233,14 @@ function buildDraftPayload(items, auditId, respondedBy) {
     audit_location: normalizeDraftValue(item.auditLocation || null),
     responded_by: normalizeDraftValue(respondedBy),
     pic_for_ng_user_id: normalizeDraftValue(item.picForNgUserId || null),
+    assigned_pic_user_id: normalizeDraftValue(item.picForNgUserId || null),
     pic_for_ng_name: normalizeDraftValue(item.picForNgName || item.picForNg || null),
     pic_for_ng_mobile: normalizeDraftValue(item.picForNgMobile || null),
     pic_for_ng: normalizeDraftValue(item.picForNgName || item.picForNg || null),
     status: item.result === 'NG' ? 'Open' : null,
+    action_status: item.result === 'NG' ? 'Open' : null,
+    closure_status: item.result === 'NG' ? 'Open' : null,
+    verification_status: item.result === 'NG' ? 'Not Started' : null,
     tentative_closing_date: getTentativeClosingDate(item) || null,
     evidence_files: Array.isArray(item.evidenceFiles) ? item.evidenceFiles : [],
   })).map(record => Object.fromEntries(Object.entries(record).map(([key, value]) => [key, value === undefined ? null : value])))
@@ -254,11 +258,11 @@ function mergeDraftRows(items, rows) {
       currentCondition: combinedCondition,
       gapIdentified: row.comments || '',
       auditLocation: row.audit_location || item.auditLocation || '',
-      picForNg: row.pic_for_ng_user_id || row.pic_for_ng || '',
-      picForNgUserId: row.pic_for_ng_user_id || '',
+      picForNg: row.assigned_pic_user_id || row.pic_for_ng_user_id || row.pic_for_ng || '',
+      picForNgUserId: row.assigned_pic_user_id || row.pic_for_ng_user_id || '',
       picForNgName: row.pic_for_ng_name || row.pic_for_ng || '',
       picForNgMobile: row.pic_for_ng_mobile || '',
-      status: row.status || '',
+      status: row.action_status || row.status || '',
       tentative_closing_date: normalizeDraftDate(row.tentative_closing_date),
       tentativeClosingDate: normalizeDraftDate(row.tentative_closing_date),
       evidenceFiles: Array.isArray(row.evidence_files) ? row.evidence_files : [],
@@ -568,7 +572,7 @@ export default function ConductAudit() {
         const client = requireSupabase()
         const { data, error: loadError } = await client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at')
+          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at')
           .eq('audit_id', auditId)
 
         if (loadError) throw loadError

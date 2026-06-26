@@ -48,7 +48,7 @@ function responseBelongsToPic(row, user) {
   const userMobile = normalizeText(String(user?.mobile_no || user?.mobile || '').replace(/\D/g, '').slice(-10))
   const rowName = normalizeText(row.pic_for_ng_name || row.pic_for_ng)
   const userName = normalizeText(user?.employee_name || user?.name || user?.full_name)
-  return row.pic_for_ng_user_id === user?.id || (rowMobile && userMobile && rowMobile === userMobile) || (rowName && userName && rowName === userName)
+  return row.assigned_pic_user_id === user?.id || row.pic_for_ng_user_id === user?.id || (rowMobile && userMobile && rowMobile === userMobile) || (rowName && userName && rowName === userName)
 }
 
 function responseBelongsToAuditor(row, audit, user) {
@@ -83,15 +83,16 @@ export default function CapaTracker() {
         const auditorView = canViewAuditModule(user)
         let query = client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, status, created_at, updated_at, audit_location, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, actual_closure_date, responded_by')
+          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, action_status, status, created_at, updated_at, audit_location, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, actual_closure_date, responded_by')
           .eq('result', 'NG')
 
         if (!adminView && !auditorView) {
           const assignedFilters = [
+            `assigned_pic_user_id.eq.${user.id}`,
             `pic_for_ng_user_id.eq.${user.id}`,
             user.mobile_no ? `pic_for_ng_mobile.eq.${user.mobile_no}` : '',
           ].filter(Boolean).join(',')
-          query = query.or(assignedFilters || `pic_for_ng_user_id.eq.${user.id}`)
+          query = query.or(assignedFilters || `assigned_pic_user_id.eq.${user.id}`)
         }
 
         const { data, error } = await query
@@ -136,8 +137,8 @@ export default function CapaTracker() {
       locationAspect: location,
       targetDate: cleanDisplayValue(row.tentative_closing_date),
       createdDate: String(row.created_at || row.updated_at || '').slice(0, 10) || 'Not available',
-      status: cleanDisplayValue(row.status, 'Open'),
-      progress: row.status === 'Completed' ? 100 : row.status === 'In Progress' ? 50 : 0,
+      status: cleanDisplayValue(row.action_status || row.status, 'Open'),
+      progress: (row.action_status || row.status) === 'Completed' ? 100 : (row.action_status || row.status) === 'In Progress' ? 50 : 0,
       riskLevel: 'Critical',
       area: department,
       chapter: subQuestion ? `Q${subQuestion}` : '',

@@ -1,7 +1,17 @@
 BEGIN;
 
 ALTER TABLE audit_responses
-  ADD COLUMN IF NOT EXISTS quotation_files jsonb NOT NULL DEFAULT '[]'::jsonb;
+  ADD COLUMN IF NOT EXISTS quotation_files jsonb NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS group_disha_approval_status text,
+  ADD COLUMN IF NOT EXISTS group_disha_approved_by uuid REFERENCES app_users(id),
+  ADD COLUMN IF NOT EXISTS group_disha_approved_at timestamptz,
+  ADD COLUMN IF NOT EXISTS group_disha_approval_remarks text,
+  ADD COLUMN IF NOT EXISTS functional_hod_approval_status text,
+  ADD COLUMN IF NOT EXISTS functional_hod_approved_by uuid REFERENCES app_users(id),
+  ADD COLUMN IF NOT EXISTS functional_hod_approved_at timestamptz,
+  ADD COLUMN IF NOT EXISTS functional_hod_approval_remarks text,
+  ADD COLUMN IF NOT EXISTS group_hod_approval_status text,
+  ADD COLUMN IF NOT EXISTS hod_approval_status text;
 
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('quotation-files', 'quotation-files', true)

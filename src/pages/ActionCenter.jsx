@@ -123,6 +123,7 @@ function hasRole(user, terms) {
 
 function isAssignedToUser(row, currentUser) {
   if (!row || !currentUser) return false
+  if (row.assigned_pic_user_id && row.assigned_pic_user_id === currentUser.id) return true
   if (row.pic_for_ng_user_id && row.pic_for_ng_user_id === currentUser.id) return true
   const rowMobile = normalizeMobile(row.pic_for_ng_mobile)
   const userMobile = normalizeMobile(currentUser.mobile_no || currentUser.mobile)
@@ -141,20 +142,19 @@ function isCollaboratorForUser(row, currentUser) {
 }
 
 function isExpenseApprover(user) {
-  return isSystemAdmin(user) || hasRole(user, ['group disha', 'group functional hod', 'functional hod', 'ceo'])
+  return isSystemAdmin(user) || hasRole(user, ['ceo'])
 }
 
 function getExpenseApprovalRole(user) {
   if (isSystemAdmin(user)) return 'System Admin'
   if (hasRole(user, ['ceo'])) return 'CEO'
-  if (hasRole(user, ['group functional hod', 'functional hod'])) return 'Group Functional HOD'
-  return 'Group DISHA HSC PIC'
+  return 'Viewer'
 }
 
 function expenseStatus(row = {}) {
   const text = cleanText(row.expense_approval_status)
   if (text) return text
-  return row.monetary_support_required ? 'Pending Approval' : 'Not Required'
+  return row.monetary_support_required || row.expense_approval_required ? 'Pending CEO Approval' : 'Not Required'
 }
 
 function formatMoney(value) {
@@ -211,7 +211,7 @@ function getSimpleStatus(status, row = {}) {
   if (!value || ['open', 'assigned', 'assigned to ng pic', 'ng identified'].includes(value)) return 'Assigned'
   if (['root cause updated', 'action plan created', 'planning'].includes(value)) return 'Planning'
   if (['in progress', 'collaboration in progress', 'co-assigned'].includes(value)) return 'In Progress'
-  if (['closure requested', 'submitted for review', 'pending approval'].includes(value)) return 'Submitted for Review'
+  if (['closure requested', 'submitted for review', 'pending approval', 'pending ceo approval'].includes(value)) return 'Submitted for Review'
   if (['rejected', 'send back', 'sent back', 'reassigned', 'reassigned by group disha', 'rejected by ceo'].includes(value)) return 'Reassigned'
   if (['completed', 'closed', 'closed by ceo', 'approved', 'approved closed'].includes(value)) return 'Closed'
   return 'Assigned'
@@ -241,29 +241,15 @@ function getProcessFlowStage(status) {
 
 function isReviewQueueItem(item) {
   if (!item) return false
-  const status = getSimpleStatus(item.status, item)
+  const status = getSimpleStatus(item.action_status || item.status, item)
   if (status === 'Closed') return false
   const extensionPending = normalizeText(item.extension_request_status) === 'pending'
-  const expensePending = normalizeText(item.expense_approval_status) === 'pending approval'
-  return ['Submitted for Review', 'Reassigned', 'In Progress'].includes(status)
-    || normalizeText(item.status) === 'pending review'
-    || normalizeText(item.status) === 'closure requested'
+  const verificationPending = ['pending', 'verification pending'].includes(normalizeText(item.verification_status))
+  return ['Submitted for Review'].includes(status)
+    || normalizeText(item.action_status || item.status) === 'pending review'
+    || normalizeText(item.action_status || item.status) === 'closure requested'
     || extensionPending
-    || expensePending
-}
-
-function buildAssignedFilters(currentUser) {
-  const filters = []
-  if (currentUser?.id) filters.push(`pic_for_ng_user_id.eq.${currentUser.id}`)
-  const mobileCandidates = [
-    currentUser?.mobile_no,
-    currentUser?.mobile,
-    normalizeMobile(currentUser?.mobile_no || currentUser?.mobile || ''),
-  ].map(value => String(value || '').trim()).filter(Boolean)
-  mobileCandidates.forEach(value => {
-    if (!filters.includes(`pic_for_ng_mobile.eq.${value}`)) filters.push(`pic_for_ng_mobile.eq.${value}`)
-  })
-  return filters.join(',')
+    || verificationPending
 }
 
 function isClosedStatus(status) {
@@ -337,13 +323,7 @@ export default function ActionCenter() {
       setError('')
       try {
         const client = requireSupabase()
-        console.log('Disha current user', currentUser)
-        console.log('Disha role/userType', currentUser?.role, currentUser?.user_type)
-        console.log('Disha current user name', currentUser?.employee_name)
-        console.log('Assigned NG query user id', currentUser?.id)
-        console.log('Assigned NG query mobile', currentUser?.mobile_no)
-
-        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, status, responded_by, created_at, updated_at, sub_question_text, audit_location, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_status, group_disha_approval_status, functional_hod_approval_status, ceo_approval_required, ceo_approval_status, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files'
+        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files'
         const allNgResult = await client
           .from('audit_responses')
           .select(stableSelect)
@@ -352,18 +332,6 @@ export default function ActionCenter() {
 
         if (!cancelled) {
           const rows = allNgResult.data || []
-          console.log('All NG rows count', rows?.length)
-          console.log('Sample NG rows', rows?.slice(0, 5))
-          const assignedRows = rows.filter(item => isAssignedToUser(item, currentUser))
-          const statusCounts = rows.reduce((counts, item) => {
-            const status = getSimpleStatus(item.status, item)
-            counts[status] = (counts[status] || 0) + 1
-            return counts
-          }, {})
-          console.log('Total NG rows fetched', rows?.length)
-          console.log('Assigned to me rows', assignedRows?.length)
-          console.log('Filter status counts', statusCounts)
-          if (!assignedRows.length) console.warn('No assigned NG items found for user', currentUser)
           setNgItems(rows)
         }
       } catch (loadError) {
@@ -383,7 +351,8 @@ export default function ActionCenter() {
   const hubCards = useMemo(() => ngItems.map(item => {
     const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
     const fullDepartment = audit.department || (Array.isArray(audit.departments) ? audit.departments.join(', ') : audit.departments) || ''
-    const status = getSimpleStatus(item.status, item)
+    const workflowStatus = item.action_status || item.closure_status || ''
+    const status = getSimpleStatus(workflowStatus, item)
     const targetDate = formatDate(item.tentative_closing_date) || 'Not available'
     const card = {
       id: item.id,
@@ -398,9 +367,14 @@ export default function ActionCenter() {
       subQuestion: getSubQuestionLabel(item.sub_question_num),
       question: cleanDisplayValue(item.sub_question_text),
       condition: cleanDisplayValue(item.current_condition_observed),
-      assignedPic: getDisplayName(item.pic_for_ng_name || item.pic_for_ng_user_id),
+      assignedPic: getDisplayName(item.pic_for_ng_name || item.assigned_pic_user_id),
       targetDate,
       status,
+      actionStatus: cleanText(item.action_status) || status,
+      assignedPicUserId: item.assigned_pic_user_id || '',
+      submittedForReviewAt: cleanText(item.submitted_for_review_at),
+      closureStatus: cleanText(item.closure_status),
+      verificationStatus: cleanText(item.verification_status),
       causeCategory: cleanText(item.cause_category),
       rootCause: cleanText(item.root_cause),
       actionPlanItems: Array.isArray(item.action_plan_items) ? item.action_plan_items : [],
@@ -422,11 +396,11 @@ export default function ActionCenter() {
       expectedExpenseAmount: item.expected_expense_amount || '',
       expensePurpose: cleanText(item.expense_purpose),
       expenseCategory: cleanText(item.expense_category),
+      expenseApprovalRequired: Boolean(item.expense_approval_required ?? item.monetary_support_required),
+      expenseApproverRole: cleanText(item.expense_approver_role) || 'CEO',
       expenseApprovalStatus: expenseStatus(item),
-      groupDishaApprovalStatus: cleanText(item.group_disha_approval_status) || 'Pending',
-      functionalHodApprovalStatus: cleanText(item.functional_hod_approval_status) || 'Pending',
-      ceoApprovalRequired: Boolean(item.ceo_approval_required),
-      ceoApprovalStatus: cleanText(item.ceo_approval_status) || 'Pending',
+      ceoApprovalRequired: Boolean(item.expense_approval_required ?? item.monetary_support_required),
+      ceoApprovalStatus: expenseStatus(item) === 'Approved' || expenseStatus(item) === 'Rejected' ? expenseStatus(item) : (Boolean(item.expense_approval_required ?? item.monetary_support_required) ? 'Pending' : 'Not Required'),
       extensionRequestStatus: cleanText(item.extension_request_status),
       extensionRequestedDate: formatDate(item.extension_requested_date),
       extensionReason: cleanText(item.extension_reason),
@@ -445,27 +419,34 @@ export default function ActionCenter() {
       isRaisedByMe: item.responded_by === user?.id || auditBelongsToUser(audit, user),
       reviewQueue: isReviewQueueItem(item),
     }
-    return { ...card, overdue: isOverdue(card), closed: status === 'Closed', reviewReady: card.reviewQueue, expensePending: expenseStatus(item) === 'Pending Approval' }
+    return {
+      ...card,
+      overdue: isOverdue(card),
+      closed: status === 'Closed',
+      reviewReady: card.reviewQueue,
+      expensePending: card.monetarySupportRequired && expenseStatus(item) === 'Pending CEO Approval',
+    }
   }), [ngItems, audits, user])
 
   const assignedCards = useMemo(() => hubCards.filter(item => item.isAssigned && !item.closed), [hubCards])
   const raisedCards = useMemo(() => hubCards.filter(item => item.isRaisedByMe), [hubCards])
   const collaborationCards = useMemo(() => hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)), [adminView, hubCards])
   const reviewCards = useMemo(() => hubCards.filter(item => item.reviewReady), [hubCards])
+  const expenseCards = useMemo(() => hubCards.filter(item => item.expensePending), [hubCards])
   const completedCards = useMemo(() => hubCards.filter(item => item.closed), [hubCards])
   const allCards = hubCards
 
   const visibleTabs = useMemo(() => {
     const tabs = []
-    if (!adminView) tabs.push({ key: 'assigned', label: 'Assigned to Me', count: assignedCards.length })
+    tabs.push({ key: 'assigned', label: 'Assigned to Me', count: assignedCards.length })
     if (auditorView || adminView) tabs.push({ key: 'raised', label: 'Raised by Me', count: raisedCards.length })
     tabs.push({ key: 'collaboration', label: 'Collaboration', count: collaborationCards.length })
     if (reviewerView || adminView || expenseApproverView) tabs.push({ key: 'review', label: 'Review Queue', count: reviewCards.length })
-    if (expenseApproverView) tabs.push({ key: 'expense', label: 'Expense Approvals', count: hubCards.filter(item => item.expensePending).length })
+    if (expenseApproverView) tabs.push({ key: 'expense', label: 'Expense Approvals', count: expenseCards.length })
     tabs.push({ key: 'completed', label: 'Completed / Closed', count: completedCards.length })
     if (adminView) tabs.push({ key: 'all', label: 'All NG Actions', count: allCards.length })
     return tabs
-  }, [adminView, auditorView, reviewerView, expenseApproverView, assignedCards, raisedCards, collaborationCards, reviewCards, completedCards, allCards, hubCards])
+  }, [adminView, auditorView, reviewerView, expenseApproverView, assignedCards, raisedCards, collaborationCards, reviewCards, expenseCards, completedCards, allCards])
 
   useEffect(() => {
     if (visibleTabs.length && !visibleTabs.some(tab => tab.key === activeTab)) setActiveTab(visibleTabs[0].key)
@@ -481,11 +462,11 @@ export default function ActionCenter() {
     if (activeTab === 'raised') return hubCards.filter(item => item.isRaisedByMe)
     if (activeTab === 'collaboration') return hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired))
     if (activeTab === 'review') return hubCards.filter(item => item.reviewQueue)
-    if (activeTab === 'expense') return hubCards.filter(item => item.expensePending)
+    if (activeTab === 'expense') return expenseCards
     if (activeTab === 'completed') return hubCards.filter(item => item.closed)
     if (activeTab === 'all') return hubCards
-    return adminView ? hubCards.filter(item => !item.closed) : hubCards.filter(item => item.isAssigned && !item.closed)
-  }, [activeTab, adminView, hubCards])
+    return hubCards.filter(item => item.isAssigned && !item.closed)
+  }, [activeTab, expenseCards, hubCards])
 
   useEffect(() => {
     if (activeTab === 'review' && hubCards.length && !hubRows.length) {
@@ -707,7 +688,8 @@ export default function ActionCenter() {
     }
 
     const collaborator = people.find(person => person.id === actionForm.collaboratorUserId) || null
-    const expectedExpenseAmount = Number(actionForm.expectedExpenseAmount || 0)
+    const hasExpectedExpenseAmount = String(actionForm.expectedExpenseAmount ?? '').trim() !== ''
+    const expectedExpenseAmount = hasExpectedExpenseAmount ? Number(actionForm.expectedExpenseAmount) : null
     const currentItem = hubCards.find(item => item.id === editingNgId)
     let quotationFiles = cleanFileList(actionForm.quotationFiles)
     setActionSaving(true)
@@ -833,11 +815,11 @@ export default function ActionCenter() {
     <PageHeader eyebrow="DISHA ACTION HUB" title="Disha Action Hub" description="Simple journey: Understand Issue -> Root Cause -> Support / Collaboration -> Action Plan -> Evidence & Submit." action={<button className="secondary-button" onClick={() => navigate('/dashboard')}><TrendingUp size={17} /> Back to Dashboard</button>} />
 
     <section className="action-summary-grid">
-      <ActionCard title="Assigned to Me" count={hubCards.filter(item => item.isAssigned && !item.closed).length} meta="My open actions" tone="blue" icon={Target} onClick={() => setActiveTab('assigned')} />
-      <ActionCard title="Collaboration" count={hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)).length} meta="Support requested" tone="amber" icon={Clock3} onClick={() => setActiveTab('collaboration')} />
+      <ActionCard title="Assigned to Me" count={assignedCards.length} meta="My open actions" tone="blue" icon={Target} onClick={() => setActiveTab('assigned')} />
+      <ActionCard title="Collaboration" count={collaborationCards.length} meta="Support requested" tone="amber" icon={Clock3} onClick={() => setActiveTab('collaboration')} />
       <ActionCard title="Review Queue" count={reviewCards.length} meta="Submitted or extension" tone="green" icon={CheckCircle2} onClick={() => setActiveTab('review')} />
-      {expenseApproverView && <ActionCard title="Expense Approvals" count={hubCards.filter(item => item.expensePending).length} meta="Pending expense requests" tone="amber" icon={ShieldAlert} onClick={() => setActiveTab('expense')} />}
-      <ActionCard title="Completed / Closed" count={hubCards.filter(item => item.closed).length} meta="Closed cases" tone="blue" icon={ShieldAlert} onClick={() => setActiveTab('completed')} />
+      {expenseApproverView && <ActionCard title="Expense Approvals" count={expenseCards.length} meta="CEO pending monetary cases" tone="amber" icon={ShieldAlert} onClick={() => setActiveTab('expense')} />}
+      <ActionCard title="Completed / Closed" count={completedCards.length} meta="Closed cases" tone="blue" icon={ShieldAlert} onClick={() => setActiveTab('completed')} />
       {adminView && <ActionCard title="All NG Actions" count={hubCards.length} meta="Admin view" tone="blue" icon={Bell} onClick={() => setActiveTab('all')} />}
     </section>
 
