@@ -128,8 +128,9 @@ function hasRole(user, terms) {
 
 function isAssignedToUser(row, currentUser) {
   if (!row || !currentUser) return false
-  if (row.assigned_pic_user_id && row.assigned_pic_user_id === currentUser.id) return true
-  if (row.pic_for_ng_user_id && row.pic_for_ng_user_id === currentUser.id) return true
+  const userId = currentUser.id || currentUser.user_id || ''
+  if (row.assigned_pic_user_id && row.assigned_pic_user_id === userId) return true
+  if (row.pic_for_ng_user_id && row.pic_for_ng_user_id === userId) return true
   const rowMobile = normalizeMobile(row.pic_for_ng_mobile)
   const userMobile = normalizeMobile(currentUser.mobile_no || currentUser.mobile)
   if (rowMobile && userMobile && rowMobile === userMobile) return true
@@ -140,7 +141,8 @@ function isAssignedToUser(row, currentUser) {
 
 function isCollaboratorForUser(row, currentUser) {
   if (!row || !currentUser) return false
-  if (row.collaborator_user_id && row.collaborator_user_id === currentUser.id) return true
+  const userId = currentUser.id || currentUser.user_id || ''
+  if (row.collaborator_user_id && row.collaborator_user_id === userId) return true
   const rowMobile = normalizeMobile(row.collaborator_mobile)
   const userMobile = normalizeMobile(currentUser.mobile_no || currentUser.mobile)
   return Boolean(rowMobile && userMobile && rowMobile === userMobile)
@@ -198,6 +200,47 @@ function createStoragePath(responseId, fileName) {
   return `${responseId}/${Date.now()}-${safeName}`
 }
 
+function parseStoredJson(storage, key) {
+  if (!storage) return null
+  try {
+    const raw = storage.getItem(key)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function getStoredUserCandidate() {
+  if (typeof window === 'undefined') return null
+  const keys = ['current_user', 'disha-hsc-auth', 'user', 'currentUser', 'authUser']
+  for (const key of keys) {
+    const localCandidate = parseStoredJson(window.localStorage, key)
+    if (localCandidate) return localCandidate
+    const sessionCandidate = parseStoredJson(window.sessionStorage, key)
+    if (sessionCandidate) return sessionCandidate
+  }
+  return null
+}
+
+function normalizeCurrentUser(authUser, storedUser) {
+  const source = authUser || storedUser || null
+  if (!source) return null
+  const access = Array.isArray(source.access) ? source.access : Array.isArray(source.mappings) ? source.mappings : []
+  const primaryAccess = access[0] || {}
+  return {
+    ...source,
+    id: source.id || source.user_id || '',
+    user_id: source.user_id || source.id || '',
+    mobile: source.mobile || source.mobile_no || source.phone || '',
+    mobile_no: source.mobile_no || source.mobile || source.phone || '',
+    role: source.role || primaryAccess.role || '',
+    user_type: source.user_type || primaryAccess.user_type || '',
+    location: source.location || primaryAccess.location || '',
+    department: source.department || primaryAccess.department || '',
+    access,
+  }
+}
+
 function personOptionLabel(person) {
   const name = cleanDisplayValue(person.employee_name || person.name || person.full_name || person.mobile_no)
   const meta = safeJoin([person.department, person.location, person.mobile_no], ' - ')
@@ -206,8 +249,9 @@ function personOptionLabel(person) {
 
 function auditBelongsToUser(audit, user) {
   if (!audit || !user) return false
+  const userId = user.id || user.user_id || ''
   const userName = normalizeText(user.employee_name || user.name || user.full_name)
-  return [audit.created_by, audit.createdBy, audit.auditor_id, audit.auditorId, audit.auditor_user_id, audit.auditorUserId].some(value => value && value === user.id)
+  return [audit.created_by, audit.createdBy, audit.auditor_id, audit.auditorId, audit.auditor_user_id, audit.auditorUserId].some(value => value && value === userId)
     || [audit.auditor_name, audit.auditorName, audit.owner, audit.createdByName].some(value => normalizeText(value) && normalizeText(value) === userName)
 }
 
@@ -317,10 +361,11 @@ export default function ActionCenter() {
   const [actionSaving, setActionSaving] = useState(false)
   const [actionMessage, setActionMessage] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
-  const adminView = canManageDishaWorkflow(user)
-  const auditorView = canViewAuditModule(user)
-  const reviewerView = canManageDishaWorkflow(user)
-  const expenseApproverView = isExpenseApprover(user)
+  const currentUser = useMemo(() => normalizeCurrentUser(user, getStoredUserCandidate()), [user])
+  const adminView = canManageDishaWorkflow(currentUser)
+  const auditorView = canViewAuditModule(currentUser)
+  const reviewerView = canManageDishaWorkflow(currentUser)
+  const expenseApproverView = isExpenseApprover(currentUser)
 
   useEffect(() => {
     let cancelled = false
@@ -342,9 +387,16 @@ export default function ActionCenter() {
     let cancelled = false
 
     async function loadNgItems() {
-      const currentUser = user
-      if (!currentUser?.id) {
+      const activeUser = currentUser
+      if (!activeUser?.id && !activeUser?.user_id) {
         setNgItems([])
+        if (typeof window !== 'undefined') {
+          console.info('ACTION CENTER USER SOURCE', {
+            authContextUser: user || null,
+            storedUser: getStoredUserCandidate(),
+          })
+          console.info('CURRENT USER', activeUser)
+        }
         return
       }
 
@@ -366,17 +418,22 @@ export default function ActionCenter() {
             const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
             return isValidNgAction(item, audit)
           })
-          const assignedRows = validRows.filter(item => isAssignedToUser(item, currentUser))
-          if (import.meta.env.DEV) {
-            console.info('Disha Action Hub debug', {
-              totalFetched: fetchedRows.length,
-              afterVoidFilter: fetchedRows.length,
-              afterValidActionFilter: validRows.length,
-              afterAssignedToMeFilter: assignedRows.length,
-              currentUserId: currentUser.id,
-              currentUserMobile: normalizeMobile(currentUser.mobile_no || currentUser.mobile),
-            })
-          }
+          const assignedRows = validRows.filter(item => isAssignedToUser(item, activeUser))
+          console.info('ACTION CENTER USER SOURCE', {
+            authContextUser: user || null,
+            storedUser: getStoredUserCandidate(),
+          })
+          console.info('CURRENT USER', activeUser)
+          console.info('FETCHED ROWS', {
+            totalFetched: fetchedRows.length,
+            afterVoidFilter: fetchedRows.length,
+            afterValidActionFilter: validRows.length,
+          })
+          console.info('ASSIGNED ROWS', {
+            assignedCount: assignedRows.length,
+            currentUserId: activeUser.id || activeUser.user_id || '',
+            currentUserMobile: normalizeMobile(activeUser.mobile_no || activeUser.mobile),
+          })
           setNgItems(validRows)
         }
       } catch (loadError) {
@@ -391,7 +448,7 @@ export default function ActionCenter() {
 
     loadNgItems()
     return () => { cancelled = true }
-  }, [adminView, auditorView, reviewerView, expenseApproverView, user, audits, refreshKey])
+  }, [adminView, auditorView, reviewerView, expenseApproverView, user, currentUser, audits, refreshKey])
 
   const hubCards = useMemo(() => ngItems.map(item => {
     const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
@@ -459,9 +516,9 @@ export default function ActionCenter() {
         mime_type: cleanText(file?.mime_type || file?.type),
         file_size: Number(file?.file_size || file?.size || 0) || 0,
       })),
-      isAssigned: isAssignedToUser(item, user),
-      isCollaborator: isCollaboratorForUser(item, user),
-      isRaisedByMe: item.responded_by === user?.id || auditBelongsToUser(audit, user),
+      isAssigned: isAssignedToUser(item, currentUser),
+      isCollaborator: isCollaboratorForUser(item, currentUser),
+      isRaisedByMe: item.responded_by === (currentUser?.id || currentUser?.user_id) || auditBelongsToUser(audit, currentUser),
       reviewQueue: isReviewQueueItem(item),
     }
     return {
@@ -471,7 +528,7 @@ export default function ActionCenter() {
       reviewReady: card.reviewQueue,
       expensePending: card.monetarySupportRequired && expenseStatus(item) === 'Pending CEO Approval',
     }
-  }), [ngItems, audits, user])
+  }), [ngItems, audits, currentUser])
 
   const assignedCards = useMemo(() => hubCards.filter(item => item.isAssigned && !item.closed), [hubCards])
   const raisedCards = useMemo(() => hubCards.filter(item => item.isRaisedByMe), [hubCards])
@@ -687,7 +744,7 @@ export default function ActionCenter() {
         file_name: pending.name,
         file_url: publicUrlData?.publicUrl || '',
         storage_path: storagePath,
-        uploaded_by: user?.id || '',
+        uploaded_by: currentUser?.id || currentUser?.user_id || '',
         uploaded_date: new Date().toISOString(),
         mime_type: pending.type || '',
         file_size: pending.size || 0,
@@ -725,7 +782,7 @@ export default function ActionCenter() {
   }
 
   async function saveAction(nextStatus = 'Planning') {
-    if (!editingNgId || !user?.id) return
+    if (!editingNgId || !(currentUser?.id || currentUser?.user_id)) return
     const pending = validateAction(nextStatus)
     if (pending.length) {
       setActionMessage(pending.join('\n'))
@@ -744,7 +801,7 @@ export default function ActionCenter() {
       quotationFiles = await uploadQuotationFiles(editingNgId)
       const { error: saveError } = await client.rpc('submit_disha_action_update', {
         p_response_id: editingNgId,
-        p_user_id: user.id,
+        p_user_id: currentUser.id || currentUser.user_id,
         p_status: nextStatus,
         p_cause_category: actionForm.causeCategory || null,
         p_root_cause: actionForm.rootCause || null,
@@ -800,6 +857,7 @@ export default function ActionCenter() {
   }
 
   async function approveExpense(item, decision) {
+    if (!(currentUser?.id || currentUser?.user_id)) return
     const comments = actionForm.reviewComments || item.reviewComments || ''
     if (decision === 'Rejected' && !comments.trim()) {
       setActionMessage('Comments are required to reject an expense request.')
@@ -812,8 +870,8 @@ export default function ActionCenter() {
       const client = requireSupabase()
       const { error: approvalError } = await client.rpc('approve_expense_request', {
         p_response_id: item.id,
-        p_user_id: user.id,
-        p_role: getExpenseApprovalRole(user),
+        p_user_id: currentUser.id || currentUser.user_id,
+        p_role: getExpenseApprovalRole(currentUser),
         p_decision: decision,
         p_comments: comments || null,
       })
@@ -829,6 +887,7 @@ export default function ActionCenter() {
   }
 
   async function reviewAction(item, decision) {
+    if (!(currentUser?.id || currentUser?.user_id)) return
     const comments = actionForm.reviewComments || item.reviewComments || ''
     if (decision === 'Send Back' && !comments.trim()) {
       setActionMessage('Review comments are required to send back.')
@@ -841,7 +900,7 @@ export default function ActionCenter() {
       const client = requireSupabase()
       const { error: reviewError } = await client.rpc('review_disha_action', {
         p_response_id: item.id,
-        p_user_id: user.id,
+        p_user_id: currentUser.id || currentUser.user_id,
         p_decision: decision,
         p_review_comments: comments || null,
       })
