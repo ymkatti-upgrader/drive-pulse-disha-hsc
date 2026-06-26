@@ -145,6 +145,21 @@ WHERE
   OR (monetary_support_required AND coalesce(ceo_approval_status, '') = '')
   OR (NOT monetary_support_required AND ceo_approval_status IS NOT NULL);
 
+UPDATE audit_responses
+SET assigned_pic_user_id = pic_for_ng_user_id
+WHERE assigned_pic_user_id IS NULL
+  AND pic_for_ng_user_id IS NOT NULL;
+
+UPDATE audit_responses
+SET action_status = 'Assigned'
+WHERE action_status IS NULL
+  AND is_void IS NOT TRUE
+  AND (
+    assigned_pic_user_id IS NOT NULL
+    OR pic_for_ng_user_id IS NOT NULL
+    OR nullif(btrim(coalesce(pic_for_ng_mobile, '')), '') IS NOT NULL
+  );
+
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('quotation-files', 'quotation-files', true)
 ON CONFLICT (id) DO UPDATE

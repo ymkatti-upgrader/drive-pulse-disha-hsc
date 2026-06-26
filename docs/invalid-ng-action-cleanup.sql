@@ -28,7 +28,24 @@ ORDER BY ar.created_at DESC;
 ALTER TABLE audit_responses
   ADD COLUMN IF NOT EXISTS is_void boolean NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS void_reason text,
-  ADD COLUMN IF NOT EXISTS voided_at timestamptz;
+  ADD COLUMN IF NOT EXISTS voided_at timestamptz,
+  ADD COLUMN IF NOT EXISTS assigned_pic_user_id uuid,
+  ADD COLUMN IF NOT EXISTS action_status text;
+
+UPDATE audit_responses
+SET assigned_pic_user_id = pic_for_ng_user_id
+WHERE assigned_pic_user_id IS NULL
+  AND pic_for_ng_user_id IS NOT NULL;
+
+UPDATE audit_responses
+SET action_status = 'Assigned'
+WHERE action_status IS NULL
+  AND is_void IS NOT TRUE
+  AND (
+    assigned_pic_user_id IS NOT NULL
+    OR pic_for_ng_user_id IS NOT NULL
+    OR nullif(btrim(coalesce(pic_for_ng_mobile, '')), '') IS NOT NULL
+  );
 
 WITH invalid_rows AS (
   SELECT ar.id

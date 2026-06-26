@@ -230,7 +230,7 @@ function isValidNgAction(item, audit = {}) {
   const hasQuestion = Boolean(resolveActionQuestion(item)) || hasMeaningfulValue(item.checklist_id) || hasMeaningfulValue(item.dq_question_num) || hasMeaningfulValue(item.sub_question_num)
   const hasLocation = Boolean(resolveActionLocation(item, audit))
   const hasDepartment = Boolean(resolveActionDepartment(item, audit))
-  const hasAssignedPic = Boolean(item.assigned_pic_user_id || item.pic_for_ng_user_id)
+  const hasAssignedPic = Boolean(item.assigned_pic_user_id || item.pic_for_ng_user_id || cleanText(item.pic_for_ng_mobile))
   const hasAuditId = hasMeaningfulValue(item.audit_id)
   return hasWorkflowStatus && hasQuestion && hasLocation && hasDepartment && hasAssignedPic && hasAuditId
 }
@@ -361,11 +361,23 @@ export default function ActionCenter() {
         if (allNgResult.error) throw allNgResult.error
 
         if (!cancelled) {
-          const rows = (allNgResult.data || []).filter(item => {
+          const fetchedRows = allNgResult.data || []
+          const validRows = fetchedRows.filter(item => {
             const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
             return isValidNgAction(item, audit)
           })
-          setNgItems(rows)
+          const assignedRows = validRows.filter(item => isAssignedToUser(item, currentUser))
+          if (import.meta.env.DEV) {
+            console.info('Disha Action Hub debug', {
+              totalFetched: fetchedRows.length,
+              afterVoidFilter: fetchedRows.length,
+              afterValidActionFilter: validRows.length,
+              afterAssignedToMeFilter: assignedRows.length,
+              currentUserId: currentUser.id,
+              currentUserMobile: normalizeMobile(currentUser.mobile_no || currentUser.mobile),
+            })
+          }
+          setNgItems(validRows)
         }
       } catch (loadError) {
         if (!cancelled) {
