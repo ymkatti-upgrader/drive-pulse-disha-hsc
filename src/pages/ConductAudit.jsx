@@ -219,8 +219,31 @@ function normalizeDraftValue(value) {
   return value === undefined ? null : value
 }
 
+function hasMeaningfulQuestionData(item) {
+  return Boolean(
+    cleanQuestion(item?.evaluationQuestion || item?.question || '')
+    || String(item?.dqQuestionNum || item?.id || '').trim()
+    || String(item?.dbId || '').trim()
+  )
+}
+
+function shouldPersistAuditResponse(item, auditId) {
+  if (!auditId || !item?.dbId || !hasMeaningfulQuestionData(item)) return false
+  const hasAnyActionableInput = Boolean(
+    String(item.result || '').trim()
+    || String(item.currentCondition || '').trim()
+    || String(item.gapIdentified || '').trim()
+    || String(item.picForNgUserId || item.picForNg || '').trim()
+    || String(item.tentative_closing_date || item.tentativeClosingDate || '').trim()
+    || (Array.isArray(item.evidenceFiles) && item.evidenceFiles.length)
+  )
+  if (!hasAnyActionableInput) return false
+  if (item.result === 'NG' && !hasMeaningfulQuestionData(item)) return false
+  return true
+}
+
 function buildDraftPayload(items, auditId, respondedBy) {
-  return items.map(item => ({
+  return items.filter(item => shouldPersistAuditResponse(item, auditId)).map(item => ({
     audit_id: auditId,
     checklist_id: normalizeDraftValue(item.dbId),
     dq_question_num: normalizeDraftValue(item.dqQuestionNum || item.id || null),
@@ -574,6 +597,7 @@ export default function ConductAudit() {
           .from('audit_responses')
           .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, pic_for_ng, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at')
           .eq('audit_id', auditId)
+          .eq('is_void', false)
 
         if (loadError) throw loadError
 

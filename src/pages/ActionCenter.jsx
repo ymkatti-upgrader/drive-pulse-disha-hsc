@@ -108,6 +108,11 @@ function shortDepartment(value) {
   return departments.length > 2 ? `${departments.slice(0, 2).join(', ')}...` : departments.join(', ')
 }
 
+function hasMeaningfulValue(value) {
+  const text = cleanText(value)
+  return Boolean(text && text !== '-' && !isUuid(text))
+}
+
 function getSubQuestionLabel(value) {
   const text = cleanText(value).replace(/^Q/i, '')
   return text && text !== '-' ? `Q${text}` : 'Not available'
@@ -204,6 +209,30 @@ function auditBelongsToUser(audit, user) {
   const userName = normalizeText(user.employee_name || user.name || user.full_name)
   return [audit.created_by, audit.createdBy, audit.auditor_id, audit.auditorId, audit.auditor_user_id, audit.auditorUserId].some(value => value && value === user.id)
     || [audit.auditor_name, audit.auditorName, audit.owner, audit.createdByName].some(value => normalizeText(value) && normalizeText(value) === userName)
+}
+
+function resolveActionQuestion(item) {
+  return cleanText(item.sub_question_text || item.audit_question || item.evaluation_item || item.checkpoint || item.question_text || '')
+}
+
+function resolveActionLocation(item, audit = {}) {
+  return cleanText(item.audit_location || item.location_name || audit.location || audit.location_name || '')
+}
+
+function resolveActionDepartment(item, audit = {}) {
+  const auditDepartment = Array.isArray(audit.departments) ? audit.departments.join(', ') : audit.departments
+  return cleanText(item.audit_department || item.department_name || audit.department || auditDepartment || '')
+}
+
+function isValidNgAction(item, audit = {}) {
+  if (!item || item.is_void === true) return false
+  const hasWorkflowStatus = normalizeText(item.result) === 'ng' || hasMeaningfulValue(item.action_status) || hasMeaningfulValue(item.status)
+  const hasQuestion = Boolean(resolveActionQuestion(item)) || hasMeaningfulValue(item.checklist_id) || hasMeaningfulValue(item.dq_question_num) || hasMeaningfulValue(item.sub_question_num)
+  const hasLocation = Boolean(resolveActionLocation(item, audit))
+  const hasDepartment = Boolean(resolveActionDepartment(item, audit))
+  const hasAssignedPic = Boolean(item.assigned_pic_user_id || item.pic_for_ng_user_id)
+  const hasAuditId = hasMeaningfulValue(item.audit_id)
+  return hasWorkflowStatus && hasQuestion && hasLocation && hasDepartment && hasAssignedPic && hasAuditId
 }
 
 function getSimpleStatus(status, row = {}) {
@@ -323,15 +352,19 @@ export default function ActionCenter() {
       setError('')
       try {
         const client = requireSupabase()
-        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files'
+        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, audit_department, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files, is_void, void_reason'
         const allNgResult = await client
           .from('audit_responses')
           .select(stableSelect)
           .eq('result', 'NG')
+          .eq('is_void', false)
         if (allNgResult.error) throw allNgResult.error
 
         if (!cancelled) {
-          const rows = allNgResult.data || []
+          const rows = (allNgResult.data || []).filter(item => {
+            const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
+            return isValidNgAction(item, audit)
+          })
           setNgItems(rows)
         }
       } catch (loadError) {
@@ -350,7 +383,7 @@ export default function ActionCenter() {
 
   const hubCards = useMemo(() => ngItems.map(item => {
     const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
-    const fullDepartment = audit.department || (Array.isArray(audit.departments) ? audit.departments.join(', ') : audit.departments) || ''
+    const fullDepartment = resolveActionDepartment(item, audit)
     const workflowStatus = item.action_status || item.closure_status || ''
     const status = getSimpleStatus(workflowStatus, item)
     const targetDate = formatDate(item.tentative_closing_date) || 'Not available'
@@ -358,14 +391,14 @@ export default function ActionCenter() {
       id: item.id,
       rawAuditId: item.audit_id || '',
       auditId: isUuid(item.audit_id) ? 'Not available' : cleanDisplayValue(item.audit_id),
-      location: cleanDisplayValue(audit.location || item.audit_location),
-      department: shortDepartment(fullDepartment),
+      location: cleanDisplayValue(resolveActionLocation(item, audit)),
+      department: shortDepartment(resolveActionDepartment(item, audit)),
       fullDepartment: cleanDisplayValue(fullDepartment),
       auditType: cleanDisplayValue(audit.audit_type || audit.auditType),
       auditorName: cleanDisplayValue(audit.auditor_name || audit.auditorName || audit.owner),
       dq: cleanDisplayValue(item.dq_question_num),
       subQuestion: getSubQuestionLabel(item.sub_question_num),
-      question: cleanDisplayValue(item.sub_question_text),
+      question: cleanDisplayValue(resolveActionQuestion(item)),
       condition: cleanDisplayValue(item.current_condition_observed),
       assignedPic: getDisplayName(item.pic_for_ng_name || item.assigned_pic_user_id),
       targetDate,
@@ -826,7 +859,7 @@ export default function ActionCenter() {
     <section className="card action-section-card">
       <div className="panel-head"><div><span className="eyebrow">SIMPLIFIED ACTION JOURNEY</span><h2>NG action items</h2></div><Bell /></div>
       <div className="tabs">{visibleTabs.map(tab => <button className={activeTab === tab.key ? 'active' : ''} onClick={() => setActiveTab(tab.key)} key={tab.key}>{tab.label} <span>{tab.count}</span></button>)}</div>
-      {loading ? <div className="action-empty">{activeTab === 'review' ? 'Loading review items...' : 'Loading Disha Action Hub...'}</div> : error ? <div className="action-empty">{error}</div> : hubRows.length === 0 ? <div className="action-empty">{activeTab === 'review' ? 'No items pending for review.' : activeTab === 'assigned' ? 'No NG actions assigned to you.' : 'No NG actions found for this view.'}</div> : <div className="audit-review-table">
+      {loading ? <div className="action-empty">{activeTab === 'review' ? 'Loading review items...' : 'Loading Disha Action Hub...'}</div> : error ? <div className="action-empty">{error}</div> : hubRows.length === 0 ? <div className="action-empty">{activeTab === 'review' ? 'No items pending for review.' : activeTab === 'assigned' ? 'No valid NG action items assigned.' : 'No NG actions found for this view.'}</div> : <div className="audit-review-table">
         {hubRows.map(item => {
           const canUpdate = adminView || item.isAssigned || item.isCollaborator
           const canReview = reviewerView || adminView

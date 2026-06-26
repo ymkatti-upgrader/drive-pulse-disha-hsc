@@ -66,7 +66,40 @@ ALTER TABLE audit_responses
   ADD COLUMN IF NOT EXISTS group_disha_approval_remarks text,
   ADD COLUMN IF NOT EXISTS group_hod_approval_status text,
   ADD COLUMN IF NOT EXISTS hod_approval_status text,
+  ADD COLUMN IF NOT EXISTS is_void boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS void_reason text,
+  ADD COLUMN IF NOT EXISTS voided_at timestamptz,
   ADD COLUMN IF NOT EXISTS quotation_files jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+WITH invalid_rows AS (
+  SELECT ar.id
+  FROM audit_responses ar
+  LEFT JOIN audits a
+    ON a.id::text = ar.audit_id
+  WHERE coalesce(ar.is_void, false) = false
+    AND (
+      lower(btrim(coalesce(ar.result::text, ''))) = 'ng'
+      OR nullif(btrim(coalesce(ar.action_status, '')), '') IS NOT NULL
+      OR nullif(btrim(coalesce(ar.status, '')), '') IS NOT NULL
+    )
+    AND nullif(btrim(coalesce(ar.sub_question_text, '')), '') IS NULL
+    AND nullif(btrim(coalesce(ar.dq_question_num, '')), '') IS NULL
+    AND ar.checklist_id IS NULL
+    AND nullif(btrim(coalesce(ar.audit_location, '')), '') IS NULL
+    AND a.location_id IS NULL
+    AND nullif(btrim(coalesce(ar.audit_department, '')), '') IS NULL
+    AND a.department_id IS NULL
+    AND ar.assigned_pic_user_id IS NULL
+    AND ar.pic_for_ng_user_id IS NULL
+    AND nullif(btrim(coalesce(ar.audit_id, '')), '') IS NULL
+)
+UPDATE audit_responses ar
+SET
+  is_void = true,
+  void_reason = 'Invalid blank NG action row - missing question/location/department',
+  voided_at = now()
+FROM invalid_rows ir
+WHERE ar.id = ir.id;
 
 UPDATE audit_responses
 SET
@@ -254,6 +287,16 @@ BEGIN
 
   IF v_row.result <> 'NG' THEN
     RAISE EXCEPTION 'Only NG responses can be updated through Disha Action Hub';
+  END IF;
+
+  IF coalesce(v_row.is_void, false) THEN
+    RAISE EXCEPTION 'This NG action row is void and cannot be processed.';
+  END IF;
+
+  IF nullif(btrim(coalesce(v_row.sub_question_text, '')), '') IS NULL
+     AND nullif(btrim(coalesce(v_row.dq_question_num, '')), '') IS NULL
+     AND v_row.checklist_id IS NULL THEN
+    RAISE EXCEPTION 'This NG action row is missing checklist/question data.';
   END IF;
 
   SELECT coalesce(mobile_no, '')
