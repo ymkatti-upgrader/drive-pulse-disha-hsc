@@ -1,4 +1,4 @@
-import { ArrowRight, Bell, CheckCircle2, Clock3, Plus, ShieldAlert, Target, TrendingUp, X } from 'lucide-react'
+import { ArrowRight, Bell, CheckCircle2, Clock3, Download, Eye, FileImage, FileText, Plus, ShieldAlert, Target, TrendingUp, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAudits } from '../audits/AuditContext'
@@ -11,7 +11,11 @@ const actionStatuses = ['Open', 'In Progress', 'Completed']
 const supportStatuses = ['Pending', 'In Progress', 'Completed']
 const supportDepartments = ['Sales', 'Service', 'U-Trust', 'VAS', 'Accessories', 'HR', 'Admin', 'Finance', 'Accounts', 'CRE / Customer Relations', 'Body & Paint', 'Parts', 'IT', 'Others']
 const expenseCategories = ['Repair', 'Replacement', 'Facility Improvement', 'Tools / Equipment', 'Vendor Support', 'Customer Support', 'Safety / Compliance', 'Others']
-const CEO_EXPENSE_APPROVAL_THRESHOLD = 10000
+const QUOTATION_BUCKET = 'quotation-files'
+const SUPPORTED_QUOTATION_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf']
+const SUPPORTED_QUOTATION_EXTENSIONS = ['jpg', 'jpeg', 'png', 'pdf']
+const MAX_QUOTATION_FILES = 10
+const MAX_QUOTATION_FILE_SIZE = 10 * 1024 * 1024
 
 const emptyActionForm = {
   causeCategory: '',
@@ -34,6 +38,12 @@ const emptyActionForm = {
   reviewComments: '',
   extensionRequestedDate: '',
   extensionReason: '',
+  quotationFiles: [],
+  newQuotationFiles: [],
+}
+
+function cleanFileList(value) {
+  return Array.isArray(value) ? value.filter(Boolean) : []
 }
 
 function normalizeText(value) {
@@ -149,8 +159,38 @@ function expenseStatus(row = {}) {
 
 function formatMoney(value) {
   const amount = Number(value)
-  if (!Number.isFinite(amount) || amount <= 0) return 'Not available'
+  if (!Number.isFinite(amount) || amount < 0) return 'Not available'
   return `INR ${amount.toLocaleString('en-IN')}`
+}
+
+function formatFileSize(bytes) {
+  const value = Number(bytes)
+  if (!Number.isFinite(value) || value <= 0) return 'Size unavailable'
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`
+  return `${value} B`
+}
+
+function getFileExtension(fileName) {
+  const parts = String(fileName || '').toLowerCase().split('.')
+  return parts.length > 1 ? parts.pop() : ''
+}
+
+function isPreviewableImage(file = {}) {
+  return String(file.type || file.mime_type || '').startsWith('image/')
+    || ['jpg', 'jpeg', 'png'].includes(getFileExtension(file.file_name || file.name))
+}
+
+function isPdfFile(file = {}) {
+  return String(file.type || file.mime_type || '') === 'application/pdf'
+    || getFileExtension(file.file_name || file.name) === 'pdf'
+}
+
+function createStoragePath(responseId, fileName) {
+  const safeName = String(fileName || 'attachment')
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+  return `${responseId}/${Date.now()}-${safeName}`
 }
 
 function personOptionLabel(person) {
@@ -303,7 +343,7 @@ export default function ActionCenter() {
         console.log('Assigned NG query user id', currentUser?.id)
         console.log('Assigned NG query mobile', currentUser?.mobile_no)
 
-        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, status, responded_by, created_at, updated_at, sub_question_text, audit_location, pic_for_ng'
+        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, status, responded_by, created_at, updated_at, sub_question_text, audit_location, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_status, group_disha_approval_status, functional_hod_approval_status, ceo_approval_required, ceo_approval_status, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files'
         const allNgResult = await client
           .from('audit_responses')
           .select(stableSelect)
@@ -391,6 +431,15 @@ export default function ActionCenter() {
       extensionRequestedDate: formatDate(item.extension_requested_date),
       extensionReason: cleanText(item.extension_reason),
       reviewComments: cleanText(item.review_comments),
+      quotationFiles: cleanFileList(item.quotation_files).map(file => ({
+        file_name: cleanText(file?.file_name || file?.name),
+        file_url: cleanText(file?.file_url || file?.url),
+        storage_path: cleanText(file?.storage_path),
+        uploaded_by: cleanText(file?.uploaded_by),
+        uploaded_date: cleanText(file?.uploaded_date || file?.uploaded_at),
+        mime_type: cleanText(file?.mime_type || file?.type),
+        file_size: Number(file?.file_size || file?.size || 0) || 0,
+      })),
       isAssigned: isAssignedToUser(item, user),
       isCollaborator: isCollaboratorForUser(item, user),
       isRaisedByMe: item.responded_by === user?.id || auditBelongsToUser(audit, user),
@@ -451,8 +500,15 @@ export default function ActionCenter() {
     return filtered.length ? filtered : people
   }, [people, actionForm.supportDepartment])
 
+  useEffect(() => () => {
+    cleanFileList(actionForm.newQuotationFiles).forEach(file => {
+      if (file.previewUrl) URL.revokeObjectURL(file.previewUrl)
+    })
+  }, [actionForm.newQuotationFiles])
+
   function openActionForm(item) {
-    if (!adminView && !item.isAssigned && !item.isCollaborator) {
+    const canOpenForApproval = expenseApproverView && activeTab === 'expense'
+    if (!adminView && !item.isAssigned && !item.isCollaborator && !canOpenForApproval) {
       setActionMessage('Only the assigned PIC, collaborator, or System Admin can update this action.')
       return
     }
@@ -480,6 +536,8 @@ export default function ActionCenter() {
       reviewComments: item.reviewComments || '',
       extensionRequestedDate: item.extensionRequestedDate || '',
       extensionReason: item.extensionReason || '',
+      quotationFiles: cleanFileList(item.quotationFiles),
+      newQuotationFiles: [],
     })
   }
 
@@ -503,6 +561,126 @@ export default function ActionCenter() {
     const files = Array.from(event.target.files || []).map(file => ({ name: file.name, size: file.size, type: file.type, capturedAt: new Date().toISOString() }))
     if (files.length) setActionForm(current => ({ ...current, closureEvidenceFiles: [...(current.closureEvidenceFiles || []), ...files] }))
     event.target.value = ''
+  }
+
+  function handleQuotationFiles(event) {
+    const selectedFiles = Array.from(event.target.files || [])
+    event.target.value = ''
+    if (!selectedFiles.length) return
+
+    setActionMessage('')
+    setActionForm(current => {
+      const existingCount = cleanFileList(current.quotationFiles).length + cleanFileList(current.newQuotationFiles).length
+      const accepted = []
+      const errors = []
+
+      selectedFiles.forEach(file => {
+        const extension = getFileExtension(file.name)
+        const mimeType = String(file.type || '').toLowerCase()
+        if (!SUPPORTED_QUOTATION_TYPES.includes(mimeType) && !SUPPORTED_QUOTATION_EXTENSIONS.includes(extension)) {
+          errors.push(`${file.name}: only JPG, JPEG, PNG, and PDF are allowed.`)
+          return
+        }
+        if (file.size > MAX_QUOTATION_FILE_SIZE) {
+          errors.push(`${file.name}: file size exceeds 10 MB.`)
+          return
+        }
+        if (existingCount + accepted.length >= MAX_QUOTATION_FILES) {
+          errors.push(`${file.name}: maximum 10 files allowed.`)
+          return
+        }
+        accepted.push({
+          id: `${Date.now()}-${file.name}-${accepted.length}`,
+          file,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          previewUrl: isPreviewableImage(file) ? URL.createObjectURL(file) : '',
+        })
+      })
+
+      if (errors.length) {
+        setActionMessage(errors.join('\n'))
+      }
+
+      return accepted.length
+        ? { ...current, newQuotationFiles: [...cleanFileList(current.newQuotationFiles), ...accepted] }
+        : current
+    })
+  }
+
+  function removePendingQuotationFile(fileId) {
+    setActionForm(current => {
+      const target = cleanFileList(current.newQuotationFiles).find(file => file.id === fileId)
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl)
+      return { ...current, newQuotationFiles: cleanFileList(current.newQuotationFiles).filter(file => file.id !== fileId) }
+    })
+  }
+
+  function removeSavedQuotationFile(storagePath) {
+    setActionForm(current => ({
+      ...current,
+      quotationFiles: cleanFileList(current.quotationFiles).filter(file => file.storage_path !== storagePath),
+    }))
+  }
+
+  function previewQuotationFile(file) {
+    const targetUrl = file.previewUrl || file.file_url
+    if (!targetUrl) return
+    window.open(targetUrl, '_blank', 'noopener,noreferrer')
+  }
+
+  function downloadQuotationFile(file) {
+    const targetUrl = file.previewUrl || file.file_url
+    if (!targetUrl) return
+    const anchor = document.createElement('a')
+    anchor.href = targetUrl
+    anchor.download = file.file_name || file.name || 'quotation-file'
+    anchor.target = '_blank'
+    anchor.rel = 'noopener noreferrer'
+    anchor.click()
+  }
+
+  async function uploadQuotationFiles(responseId) {
+    const pendingFiles = cleanFileList(actionForm.newQuotationFiles)
+    if (!pendingFiles.length) return cleanFileList(actionForm.quotationFiles)
+
+    const client = requireSupabase()
+    const uploadedFiles = []
+
+    for (const pending of pendingFiles) {
+      const storagePath = createStoragePath(responseId, pending.name)
+      const { error: uploadError } = await client.storage.from(QUOTATION_BUCKET).upload(storagePath, pending.file, {
+        cacheControl: '3600',
+        upsert: false,
+      })
+      if (uploadError) throw uploadError
+
+      const { data: publicUrlData } = client.storage.from(QUOTATION_BUCKET).getPublicUrl(storagePath)
+      uploadedFiles.push({
+        file_name: pending.name,
+        file_url: publicUrlData?.publicUrl || '',
+        storage_path: storagePath,
+        uploaded_by: user?.id || '',
+        uploaded_date: new Date().toISOString(),
+        mime_type: pending.type || '',
+        file_size: pending.size || 0,
+      })
+    }
+
+    return [...cleanFileList(actionForm.quotationFiles), ...uploadedFiles]
+  }
+
+  async function deleteRemovedQuotationFiles(originalFiles, nextFiles) {
+    const removedPaths = cleanFileList(originalFiles)
+      .map(file => file?.storage_path)
+      .filter(Boolean)
+      .filter(storagePath => !cleanFileList(nextFiles).some(file => file.storage_path === storagePath))
+
+    if (!removedPaths.length) return
+    const client = requireSupabase()
+    const { error: deleteError } = await client.storage.from(QUOTATION_BUCKET).remove(removedPaths)
+    if (deleteError) throw deleteError
   }
 
   function validateAction(nextStatus) {
@@ -530,10 +708,13 @@ export default function ActionCenter() {
 
     const collaborator = people.find(person => person.id === actionForm.collaboratorUserId) || null
     const expectedExpenseAmount = Number(actionForm.expectedExpenseAmount || 0)
+    const currentItem = hubCards.find(item => item.id === editingNgId)
+    let quotationFiles = cleanFileList(actionForm.quotationFiles)
     setActionSaving(true)
     setActionMessage('')
     try {
       const client = requireSupabase()
+      quotationFiles = await uploadQuotationFiles(editingNgId)
       const { error: saveError } = await client.rpc('submit_disha_action_update', {
         p_response_id: editingNgId,
         p_user_id: user.id,
@@ -554,18 +735,37 @@ export default function ActionCenter() {
         p_support_remarks: actionForm.supportRemarks || null,
         p_support_status: actionForm.supportStatus || null,
         p_monetary_support_required: Boolean(actionForm.monetarySupportRequired),
-        p_expected_expense_amount: Number.isFinite(expectedExpenseAmount) && expectedExpenseAmount > 0 ? expectedExpenseAmount : null,
+        p_expected_expense_amount: Number.isFinite(expectedExpenseAmount) && expectedExpenseAmount >= 0 ? expectedExpenseAmount : null,
         p_expense_purpose: actionForm.expensePurpose || null,
         p_expense_category: actionForm.expenseCategory || null,
-        p_ceo_approval_required: Boolean(actionForm.monetarySupportRequired && expectedExpenseAmount >= CEO_EXPENSE_APPROVAL_THRESHOLD),
+        p_ceo_approval_required: Boolean(actionForm.monetarySupportRequired),
         p_extension_requested_date: actionForm.extensionRequestedDate || null,
         p_extension_reason: actionForm.extensionReason || null,
+        p_quotation_files: quotationFiles,
       })
       if (saveError) throw saveError
+      await deleteRemovedQuotationFiles(currentItem?.quotationFiles, quotationFiles)
       setActionMessage(nextStatus === 'Submitted for Review' ? 'Submitted for review' : 'Progress saved')
+      cleanFileList(actionForm.newQuotationFiles).forEach(file => {
+        if (file.previewUrl) URL.revokeObjectURL(file.previewUrl)
+      })
       setRefreshKey(current => current + 1)
       if (nextStatus === 'Submitted for Review') setEditingNgId('')
     } catch (saveError) {
+      if (quotationFiles.length > cleanFileList(actionForm.quotationFiles).length) {
+        try {
+          const uploadedPaths = quotationFiles
+            .filter(file => !cleanFileList(actionForm.quotationFiles).some(saved => saved.storage_path === file.storage_path))
+            .map(file => file.storage_path)
+            .filter(Boolean)
+          if (uploadedPaths.length) {
+            const client = requireSupabase()
+            await client.storage.from(QUOTATION_BUCKET).remove(uploadedPaths)
+          }
+        } catch {
+          // Keep the original error visible; orphan cleanup can be retried manually.
+        }
+      }
       setActionMessage(saveError?.message || 'Unable to update action.')
     } finally {
       setActionSaving(false)
@@ -685,6 +885,7 @@ export default function ActionCenter() {
                 <small>Expected Expense: {formatMoney(item.expectedExpenseAmount)}</small>
                 <small>Expense Purpose: {item.expensePurpose || 'Not available'}</small>
                 <small>Expense Approval: {item.expenseApprovalStatus}</small>
+                <small>Quotation Status: {item.quotationFiles.length ? 'Quotation Attached' : 'No Quotation Attached'}</small>
               </>}
               {detailNgId === item.id && <section className="capa-detail-fields">
                 <div><span>Audit</span><strong>{item.auditId}</strong></div>
@@ -701,8 +902,33 @@ export default function ActionCenter() {
                 <div><span>Support Status</span><strong>{item.supportStatus || 'Not available'}</strong></div>
                 <div><span>Expense Approval</span><strong>{item.expenseApprovalStatus}</strong></div>
                 <div><span>Expected Expense</span><strong>{formatMoney(item.expectedExpenseAmount)}</strong></div>
+                <div><span>Quotation Status</span><strong>{item.quotationFiles.length ? 'Quotation Attached' : 'No Quotation Attached'}</strong></div>
                 <div><span>Action Taken</span><strong>{item.actionTaken || item.closureRemarks || 'Not available'}</strong></div>
                 <div><span>Actual Closure Date</span><strong>{item.actualClosureDate || 'Not available'}</strong></div>
+              </section>}
+              {detailNgId === item.id && item.monetarySupportRequired && <section className="action-quotation-panel">
+                <div className="panel-head compact-head">
+                  <div>
+                    <span className="eyebrow">QUOTATION / SUPPORTING DOCUMENTS</span>
+                    <h2>Attachments for approval</h2>
+                  </div>
+                  <StatusBadge>{item.quotationFiles.length ? 'Quotation Attached' : 'No Quotation Attached'}</StatusBadge>
+                </div>
+                {!item.quotationFiles.length ? <div className="action-empty">No quotation attached. CEO approval can still proceed.</div> : <div className="quotation-list">
+                  {item.quotationFiles.map(file => <div key={file.storage_path || file.file_url || file.file_name} className="quotation-file-card">
+                    <div className="quotation-file-main">
+                      <span className="quotation-file-icon">{isPdfFile(file) ? <FileText size={16} /> : <FileImage size={16} />}</span>
+                      <div>
+                        <strong>{file.file_name || 'Attachment'}</strong>
+                        <small>{formatFileSize(file.file_size)} | {file.uploaded_date ? new Date(file.uploaded_date).toLocaleString('en-IN') : 'Uploaded date unavailable'}</small>
+                      </div>
+                    </div>
+                    <div className="quotation-file-actions">
+                      {isPreviewableImage(file) && <button className="secondary-button" type="button" onClick={() => previewQuotationFile(file)}><Eye size={14} /> Preview</button>}
+                      <button className="secondary-button" type="button" onClick={() => downloadQuotationFile(file)}>{isPdfFile(file) ? <FileText size={14} /> : <Download size={14} />}{isPdfFile(file) ? ' Open PDF' : ' Download'}</button>
+                    </div>
+                  </div>)}
+                </div>}
               </section>}
               {detailNgId === item.id && <section className="action-process-flow">
                 <div className="panel-head compact-head"><div><span className="eyebrow">PROCESS FLOW</span><h2>Action journey</h2></div></div>
@@ -763,6 +989,52 @@ export default function ActionCenter() {
                     </label>
                     <label className="wide">Expense Purpose<textarea rows="2" value={actionForm.expensePurpose} onChange={event => updateActionForm('expensePurpose', event.target.value)} /></label>
                     <div className="wide approval-status-line"><span>Expense Approval Status</span><StatusBadge>{item.expenseApprovalStatus || 'Not Required'}</StatusBadge></div>
+                    <div className="wide approval-status-line"><span>CEO Approval</span><StatusBadge>{item.ceoApprovalStatus || 'Pending'}</StatusBadge></div>
+                    <div className="wide quotation-upload-panel">
+                      <div className="panel-head compact-head">
+                        <div>
+                          <span className="eyebrow">OPTIONAL</span>
+                          <h2>Quotation / Supporting Documents</h2>
+                        </div>
+                        <StatusBadge>{cleanFileList(actionForm.quotationFiles).length || cleanFileList(actionForm.newQuotationFiles).length ? 'Quotation Attached' : 'No Quotation Attached'}</StatusBadge>
+                      </div>
+                      <p className="quotation-upload-copy">Upload vendor quotations, estimates, images, supporting documents, or cost justifications. Up to 10 files, 10 MB each. JPG, JPEG, PNG, and PDF only.</p>
+                      <label className="quotation-upload-dropzone">
+                        <Upload size={16} />
+                        <span>Add files</span>
+                        <input type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" multiple onChange={handleQuotationFiles} />
+                      </label>
+                      {!cleanFileList(actionForm.quotationFiles).length && !cleanFileList(actionForm.newQuotationFiles).length ? <div className="action-empty compact">No quotation attached yet. This section is optional.</div> : <div className="quotation-list">
+                        {cleanFileList(actionForm.quotationFiles).map(file => <div key={file.storage_path || file.file_url || file.file_name} className="quotation-file-card">
+                          <div className="quotation-file-main">
+                            <span className="quotation-file-icon">{isPdfFile(file) ? <FileText size={16} /> : <FileImage size={16} />}</span>
+                            <div>
+                              <strong>{file.file_name}</strong>
+                              <small>{formatFileSize(file.file_size)} | Saved in workflow</small>
+                            </div>
+                          </div>
+                          <div className="quotation-file-actions">
+                            {isPreviewableImage(file) && <button className="secondary-button" type="button" onClick={() => previewQuotationFile(file)}><Eye size={14} /> Preview</button>}
+                            <button className="secondary-button" type="button" onClick={() => downloadQuotationFile(file)}><Download size={14} /> Download</button>
+                            <button className="secondary-button" type="button" onClick={() => removeSavedQuotationFile(file.storage_path)}><X size={14} /> Remove</button>
+                          </div>
+                        </div>)}
+                        {cleanFileList(actionForm.newQuotationFiles).map(file => <div key={file.id} className="quotation-file-card pending">
+                          <div className="quotation-file-main">
+                            <span className="quotation-file-icon">{isPdfFile(file) ? <FileText size={16} /> : <FileImage size={16} />}</span>
+                            <div>
+                              <strong>{file.name}</strong>
+                              <small>{formatFileSize(file.size)} | Ready to upload on save</small>
+                            </div>
+                          </div>
+                          <div className="quotation-file-actions">
+                            {isPreviewableImage(file) && <button className="secondary-button" type="button" onClick={() => previewQuotationFile(file)}><Eye size={14} /> Preview</button>}
+                            <button className="secondary-button" type="button" onClick={() => downloadQuotationFile(file)}><Download size={14} /> Download</button>
+                            <button className="secondary-button" type="button" onClick={() => removePendingQuotationFile(file.id)}><X size={14} /> Remove</button>
+                          </div>
+                        </div>)}
+                      </div>}
+                    </div>
                   </div>}
                 </div>
                 <div className="wide">
@@ -782,7 +1054,7 @@ export default function ActionCenter() {
                 <label>Evidence Upload<input type="file" multiple onChange={handleClosureEvidence} /></label>
                 <label>Request Extension Date<input type="date" value={actionForm.extensionRequestedDate} onChange={event => updateActionForm('extensionRequestedDate', event.target.value)} /></label>
                 <label className="wide">Extension Reason<textarea rows="2" value={actionForm.extensionReason} onChange={event => updateActionForm('extensionReason', event.target.value)} /></label>
-                {(canReview || item.reviewReady) && <label className="wide">Review Comments<textarea rows="2" value={actionForm.reviewComments} onChange={event => updateActionForm('reviewComments', event.target.value)} /></label>}
+                {(canReview || item.reviewReady || (expenseApproverView && activeTab === 'expense')) && <label className="wide">Review Comments<textarea rows="2" value={actionForm.reviewComments} onChange={event => updateActionForm('reviewComments', event.target.value)} /></label>}
                 {actionMessage && <div className="wide audit-checklist-note" role="alert"><span>{actionMessage}</span></div>}
                 <div className="wide form-footer">
                   <button className="secondary-button" type="button" onClick={() => setEditingNgId('')} disabled={actionSaving}>Cancel</button>
