@@ -234,7 +234,7 @@ Columns: `id`, `admin_support_request_id`, `vendor_name`, `vendor_contact`, `quo
 
 Foreign keys: `admin_support_request_id -> admin_support_requests(id)`, `created_by -> users(id)`
 
-Rule: if cost is involved, at least 3 quotations are required before CEO cost approval.
+Rule: if cost is involved, at least 3 quotations are required before Group DISHA HSC PIC review, and CEO gives the final cost approval.
 
 ### `cost_approvals`
 Primary key: `id`
@@ -245,7 +245,7 @@ Foreign keys: `admin_support_request_id -> admin_support_requests(id)`, `finding
 
 Unique keys: `admin_support_request_id`
 
-Rule: CEO is the final approver for cost.
+Rule: Group DISHA HSC PIC reviews monetary requests first, then CEO provides the final cost approval.
 
 ### `verification_records`
 Primary key: `id`
@@ -343,8 +343,8 @@ Cost approval:
 1. Location Functional HOD creates improvement action.
 2. Location Functional HOD requests Admin support if material, repair, or vendor help is needed.
 3. Admin collects quotations when cost is involved.
-4. Minimum 3 quotations must exist before request moves to CEO cost approval.
-5. CEO approves or rejects cost in `cost_approvals`.
+4. Minimum 3 quotations must exist before request moves to Group DISHA HSC PIC review.
+5. After PIC approval, CEO approves or rejects cost in `cost_approvals`.
 6. Rejection requires comments.
 
 Closure approval:

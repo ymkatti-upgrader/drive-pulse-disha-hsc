@@ -154,19 +154,49 @@ function isCollaboratorForUser(row, currentUser) {
 }
 
 function isExpenseApprover(user) {
-  return isSystemAdmin(user) || hasRole(user, ['ceo'])
+  return isSystemAdmin(user) || hasRole(user, ['group disha hsc pic', 'group disha pic', 'ceo'])
 }
 
-function getExpenseApprovalRole(user) {
-  if (isSystemAdmin(user)) return 'System Admin'
+function getExpenseApprovalRole(user, row = {}) {
+  const groupApproved = cleanText(row.groupDishaApprovalStatus || row.group_disha_approval_status) === 'Approved'
+  const groupRejected = cleanText(row.groupDishaApprovalStatus || row.group_disha_approval_status) === 'Rejected'
+  const groupPending = !groupApproved && !groupRejected
+
+  if (isSystemAdmin(user)) return groupPending ? 'Group Disha HSC PIC' : 'CEO'
+  if (groupPending && hasRole(user, ['group disha hsc pic', 'group disha pic'])) return 'Group Disha HSC PIC'
+  if (groupApproved && hasRole(user, ['ceo'])) return 'CEO'
+  if (hasRole(user, ['group disha hsc pic', 'group disha pic'])) return 'Group Disha HSC PIC'
   if (hasRole(user, ['ceo'])) return 'CEO'
   return 'Viewer'
 }
 
 function expenseStatus(row = {}) {
   const text = cleanText(row.expense_approval_status)
+  if (text && !['Pending Approval', 'Pending CEO Approval'].includes(text)) return text
+
+  const groupStatus = cleanText(row.group_disha_approval_status)
+  const ceoStatus = cleanText(row.ceo_approval_status)
+
+  if (!row.monetary_support_required && !row.expense_approval_required) return 'Not Required'
+  if (groupStatus === 'Rejected' || ceoStatus === 'Rejected') return 'Rejected'
+  if (ceoStatus === 'Approved') return 'Approved'
+  if (groupStatus === 'Approved') return 'Pending CEO Approval'
+  return 'Pending Group Disha HSC PIC Approval'
+}
+
+function groupDishaApprovalStatus(row = {}) {
+  const text = cleanText(row.group_disha_approval_status)
   if (text) return text
-  return row.monetary_support_required || row.expense_approval_required ? 'Pending CEO Approval' : 'Not Required'
+  return row.monetary_support_required || row.expense_approval_required ? 'Pending' : 'Not Required'
+}
+
+function ceoApprovalStatus(row = {}) {
+  const text = cleanText(row.ceo_approval_status)
+  if (text === 'Approved' || text === 'Rejected') return text
+  if (!row.monetary_support_required && !row.expense_approval_required) return 'Not Required'
+  if (cleanText(row.group_disha_approval_status) === 'Rejected') return 'Not Required'
+  if (text) return text
+  return 'Pending'
 }
 
 function formatMoney(value) {
@@ -370,6 +400,15 @@ export default function ActionCenter() {
   const reviewerView = canManageDishaWorkflow(currentUser)
   const expenseApproverView = isExpenseApprover(currentUser)
 
+  function canActOnExpense(item) {
+    const overallStatus = expenseStatus(item)
+    if (!item.monetarySupportRequired || ['Approved', 'Rejected', 'Not Required'].includes(overallStatus)) return false
+    if (cleanText(item.groupDishaApprovalStatus || item.group_disha_approval_status) === 'Approved') {
+      return isSystemAdmin(currentUser) || hasRole(currentUser, ['ceo'])
+    }
+    return isSystemAdmin(currentUser) || hasRole(currentUser, ['group disha hsc pic', 'group disha pic'])
+  }
+
   useEffect(() => {
     let cancelled = false
     async function loadPeople() {
@@ -407,7 +446,7 @@ export default function ActionCenter() {
       setError('')
       try {
         const client = requireSupabase()
-        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, audit_department, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files, is_void, void_reason'
+        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, audit_department, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, group_disha_approval_status, group_disha_approved_by, group_disha_approved_at, group_disha_comments, ceo_approval_required, ceo_approval_status, ceo_approved_by, ceo_approved_at, ceo_comments, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files, is_void, void_reason'
         const allNgResult = await client
           .from('audit_responses')
           .select(stableSelect)
@@ -517,10 +556,11 @@ export default function ActionCenter() {
       expensePurpose: cleanText(item.expense_purpose),
       expenseCategory: cleanText(item.expense_category),
       expenseApprovalRequired: Boolean(item.expense_approval_required ?? item.monetary_support_required),
-      expenseApproverRole: cleanText(item.expense_approver_role) || 'CEO',
+      expenseApproverRole: cleanText(item.expense_approver_role) || (cleanText(item.group_disha_approval_status) === 'Approved' ? 'CEO' : 'Group Disha HSC PIC'),
       expenseApprovalStatus: expenseStatus(item),
-      ceoApprovalRequired: Boolean(item.expense_approval_required ?? item.monetary_support_required),
-      ceoApprovalStatus: expenseStatus(item) === 'Approved' || expenseStatus(item) === 'Rejected' ? expenseStatus(item) : (Boolean(item.expense_approval_required ?? item.monetary_support_required) ? 'Pending' : 'Not Required'),
+      groupDishaApprovalStatus: groupDishaApprovalStatus(item),
+      ceoApprovalRequired: Boolean(item.ceo_approval_required ?? item.expense_approval_required ?? item.monetary_support_required),
+      ceoApprovalStatus: ceoApprovalStatus(item),
       extensionRequestStatus: cleanText(item.extension_request_status),
       extensionRequestedDate: formatDate(item.extension_requested_date),
       extensionReason: cleanText(item.extension_reason),
@@ -544,7 +584,7 @@ export default function ActionCenter() {
       overdue: isOverdue(card),
       closed: status === 'Closed',
       reviewReady: card.reviewQueue,
-      expensePending: card.monetarySupportRequired && expenseStatus(item) === 'Pending CEO Approval',
+      expensePending: card.monetarySupportRequired && !['Approved', 'Rejected', 'Not Required'].includes(expenseStatus(item)),
     }
   }), [ngItems, audits, currentUser])
 
@@ -552,7 +592,7 @@ export default function ActionCenter() {
   const raisedCards = useMemo(() => hubCards.filter(item => item.isRaisedByMe), [hubCards])
   const collaborationCards = useMemo(() => hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)), [adminView, hubCards])
   const reviewCards = useMemo(() => hubCards.filter(item => item.reviewReady), [hubCards])
-  const expenseCards = useMemo(() => hubCards.filter(item => item.expensePending), [hubCards])
+  const expenseCards = useMemo(() => hubCards.filter(item => item.expensePending && canActOnExpense(item)), [hubCards, currentUser])
   const completedCards = useMemo(() => hubCards.filter(item => item.closed), [hubCards])
   const allCards = hubCards
 
@@ -889,7 +929,7 @@ export default function ActionCenter() {
       const { error: approvalError } = await client.rpc('approve_expense_request', {
         p_response_id: item.id,
         p_user_id: currentUser.id || currentUser.user_id,
-        p_role: getExpenseApprovalRole(currentUser),
+        p_role: getExpenseApprovalRole(currentUser, item),
         p_decision: decision,
         p_comments: comments || null,
       })
@@ -1093,6 +1133,7 @@ export default function ActionCenter() {
                     </label>
                     <label className="wide">Expense Purpose<textarea rows="2" value={actionForm.expensePurpose} onChange={event => updateActionForm('expensePurpose', event.target.value)} /></label>
                     <div className="wide approval-status-line"><span>Expense Approval Status</span><StatusBadge>{item.expenseApprovalStatus || 'Not Required'}</StatusBadge></div>
+                    <div className="wide approval-status-line"><span>Group Disha HSC PIC Approval</span><StatusBadge>{item.groupDishaApprovalStatus || 'Pending'}</StatusBadge></div>
                     <div className="wide approval-status-line"><span>CEO Approval</span><StatusBadge>{item.ceoApprovalStatus || 'Pending'}</StatusBadge></div>
                     <div className="wide quotation-upload-panel">
                       <div className="panel-head compact-head">
@@ -1167,8 +1208,8 @@ export default function ActionCenter() {
                     {canUpdate && <button className="primary-button" type="button" onClick={() => saveAction('Submitted for Review')} disabled={actionSaving}>Submit for Review</button>}
                     {canReview && item.reviewReady && <button className="primary-button" type="button" onClick={() => reviewAction(item, 'Approve Closure')} disabled={actionSaving}>Approve Closure</button>}
                     {canReview && item.reviewReady && <button className="secondary-button" type="button" onClick={() => reviewAction(item, 'Send Back')} disabled={actionSaving}>Send Back</button>}
-                    {expenseApproverView && activeTab === 'expense' && item.expensePending && <button className="primary-button" type="button" onClick={() => approveExpense(item, 'Approved')} disabled={actionSaving}>Approve Expense</button>}
-                    {expenseApproverView && activeTab === 'expense' && item.expensePending && <button className="secondary-button" type="button" onClick={() => approveExpense(item, 'Rejected')} disabled={actionSaving}>Reject Expense</button>}
+                    {expenseApproverView && activeTab === 'expense' && canActOnExpense(item) && <button className="primary-button" type="button" onClick={() => approveExpense(item, 'Approved')} disabled={actionSaving}>Approve Expense</button>}
+                    {expenseApproverView && activeTab === 'expense' && canActOnExpense(item) && <button className="secondary-button" type="button" onClick={() => approveExpense(item, 'Rejected')} disabled={actionSaving}>Reject Expense</button>}
                   </div>
                 </div>
               </section>}
@@ -1178,7 +1219,7 @@ export default function ActionCenter() {
               {canUpdate ? <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Update Action</button> : <button className="secondary-button" type="button" onClick={() => setDetailNgId(item.id)}>View Progress</button>}
               {canReview && item.reviewQueue && <button className="primary-button" type="button" onClick={() => reviewAction(item, 'Approve Closure')} disabled={actionSaving}>Approve Closure</button>}
               {canReview && item.reviewQueue && <button className="secondary-button" type="button" onClick={() => reviewAction(item, 'Send Back')} disabled={actionSaving}>Send Back</button>}
-              {expenseApproverView && activeTab === 'expense' && item.expensePending && <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Approve</button>}
+              {expenseApproverView && activeTab === 'expense' && canActOnExpense(item) && <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Approve</button>}
             </div>
           </div>
         })}
