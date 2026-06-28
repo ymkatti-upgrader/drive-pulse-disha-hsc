@@ -199,6 +199,19 @@ function ceoApprovalStatus(row = {}) {
   return 'Pending'
 }
 
+function getExpenseDraftStatus(item = {}, form = {}) {
+  if (expenseStatus(item) !== 'Not Required') return expenseStatus(item)
+  if (!form.monetarySupportRequired) return 'Not Required'
+
+  const amountText = String(form.expectedExpenseAmount ?? '').trim()
+  const hasAmount = amountText && Number.isFinite(Number(amountText)) && Number(amountText) >= 0
+  const hasCategory = Boolean(cleanText(form.expenseCategory))
+  const hasPurpose = Boolean(cleanText(form.expensePurpose))
+
+  if (hasAmount && hasCategory && hasPurpose) return 'Ready to Send for Approval'
+  return 'Expense Draft'
+}
+
 function formatMoney(value) {
   const amount = Number(value)
   if (!Number.isFinite(amount) || amount < 0) return 'Not available'
@@ -839,6 +852,21 @@ export default function ActionCenter() {
     return pending
   }
 
+  function validateExpenseRequest() {
+    const pending = []
+    if (!actionForm.monetarySupportRequired) {
+      pending.push('Enable monetary support before sending for approval')
+      return pending
+    }
+    const amountText = String(actionForm.expectedExpenseAmount ?? '').trim()
+    if (!amountText || !Number.isFinite(Number(amountText)) || Number(amountText) < 0) {
+      pending.push('Expected Expense Amount missing')
+    }
+    if (!actionForm.expenseCategory) pending.push('Expense Category missing')
+    if (!actionForm.expensePurpose.trim()) pending.push('Expense Purpose missing')
+    return pending
+  }
+
   async function saveAction(nextStatus = 'Planning') {
     if (!editingNgId || !(currentUser?.id || currentUser?.user_id)) return
     const pending = validateAction(nextStatus)
@@ -909,6 +937,81 @@ export default function ActionCenter() {
         }
       }
       setActionMessage(saveError?.message || 'Unable to update action.')
+    } finally {
+      setActionSaving(false)
+    }
+  }
+
+  async function sendExpenseForApproval() {
+    if (!editingNgId || !(currentUser?.id || currentUser?.user_id)) return
+    const pending = validateExpenseRequest()
+    if (pending.length) {
+      setActionMessage(pending.join('\n'))
+      return
+    }
+
+    const collaborator = people.find(person => person.id === actionForm.collaboratorUserId) || null
+    const hasExpectedExpenseAmount = String(actionForm.expectedExpenseAmount ?? '').trim() !== ''
+    const expectedExpenseAmount = hasExpectedExpenseAmount ? Number(actionForm.expectedExpenseAmount) : null
+    const currentItem = hubCards.find(item => item.id === editingNgId)
+    let quotationFiles = cleanFileList(actionForm.quotationFiles)
+    setActionSaving(true)
+    setActionMessage('')
+    try {
+      const client = requireSupabase()
+      quotationFiles = await uploadQuotationFiles(editingNgId)
+      const { error: saveError } = await client.rpc('submit_disha_action_update', {
+        p_response_id: editingNgId,
+        p_user_id: currentUser.id || currentUser.user_id,
+        p_status: currentItem?.actionStatus || currentItem?.status || 'Planning',
+        p_cause_category: actionForm.causeCategory || null,
+        p_root_cause: actionForm.rootCause || null,
+        p_action_plan_items: actionForm.actionPlanItems || [],
+        p_action_taken: actionForm.actionTaken || null,
+        p_closure_remarks: actionForm.closureRemarks || null,
+        p_actual_closure_date: actionForm.actualClosureDate || null,
+        p_closure_evidence_files: actionForm.closureEvidenceFiles || [],
+        p_collaboration_required: Boolean(actionForm.collaborationRequired),
+        p_collaborator_user_id: collaborator?.id || null,
+        p_collaborator_name: collaborator?.employee_name || null,
+        p_collaborator_mobile: collaborator?.mobile_no || null,
+        p_support_department: actionForm.supportDepartment || null,
+        p_support_required: actionForm.supportRequired || null,
+        p_support_remarks: actionForm.supportRemarks || null,
+        p_support_status: actionForm.supportStatus || null,
+        p_monetary_support_required: true,
+        p_expected_expense_amount: Number.isFinite(expectedExpenseAmount) && expectedExpenseAmount >= 0 ? expectedExpenseAmount : null,
+        p_expense_purpose: actionForm.expensePurpose || null,
+        p_expense_category: actionForm.expenseCategory || null,
+        p_ceo_approval_required: true,
+        p_extension_requested_date: actionForm.extensionRequestedDate || null,
+        p_extension_reason: actionForm.extensionReason || null,
+        p_quotation_files: quotationFiles,
+      })
+      if (saveError) throw saveError
+      await deleteRemovedQuotationFiles(currentItem?.quotationFiles, quotationFiles)
+      setActionMessage('Sent for approval')
+      cleanFileList(actionForm.newQuotationFiles).forEach(file => {
+        if (file.previewUrl) URL.revokeObjectURL(file.previewUrl)
+      })
+      setRefreshKey(current => current + 1)
+      setEditingNgId('')
+    } catch (saveError) {
+      if (quotationFiles.length > cleanFileList(actionForm.quotationFiles).length) {
+        try {
+          const uploadedPaths = quotationFiles
+            .filter(file => !cleanFileList(actionForm.quotationFiles).some(saved => saved.storage_path === file.storage_path))
+            .map(file => file.storage_path)
+            .filter(Boolean)
+          if (uploadedPaths.length) {
+            const client = requireSupabase()
+            await client.storage.from(QUOTATION_BUCKET).remove(uploadedPaths)
+          }
+        } catch {
+          // Keep the original error visible; orphan cleanup can be retried manually.
+        }
+      }
+      setActionMessage(saveError?.message || 'Unable to send for approval.')
     } finally {
       setActionSaving(false)
     }
@@ -1132,9 +1235,12 @@ export default function ActionCenter() {
                       </select>
                     </label>
                     <label className="wide">Expense Purpose<textarea rows="2" value={actionForm.expensePurpose} onChange={event => updateActionForm('expensePurpose', event.target.value)} /></label>
-                    <div className="wide approval-status-line"><span>Expense Approval Status</span><StatusBadge>{item.expenseApprovalStatus || 'Not Required'}</StatusBadge></div>
+                    <div className="wide approval-status-line"><span>Expense Approval Status</span><StatusBadge>{getExpenseDraftStatus(item, actionForm)}</StatusBadge></div>
                     <div className="wide approval-status-line"><span>Group Disha HSC PIC Approval</span><StatusBadge>{item.groupDishaApprovalStatus || 'Pending'}</StatusBadge></div>
                     <div className="wide approval-status-line"><span>CEO Approval</span><StatusBadge>{item.ceoApprovalStatus || 'Pending'}</StatusBadge></div>
+                    {canUpdate && actionForm.monetarySupportRequired && <div className="wide">
+                      <button className="primary-button" type="button" onClick={sendExpenseForApproval} disabled={actionSaving}>Send for Approval</button>
+                    </div>}
                     <div className="wide quotation-upload-panel">
                       <div className="panel-head compact-head">
                         <div>
