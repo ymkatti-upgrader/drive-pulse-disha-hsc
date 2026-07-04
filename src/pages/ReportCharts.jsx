@@ -61,8 +61,8 @@ const chartConfig = [
   { key: 'picPendingActions', title: 'PIC ACTIONS', subtitle: 'PIC-wise pending actions', icon: BarChart3, dataKey: 'picPendingActions', formatter: value => `${value} pending`, focus: 'PIC pending actions' },
 ]
 
-export default function ReportCharts({ snapshot, onSelectGroup, visibleKeys }) {
-  const visibleCharts = visibleKeys?.length ? chartConfig.filter(item => visibleKeys.includes(item.key)) : chartConfig
+export default function ReportCharts({ snapshot, onSelectGroup, visibleKeys, charts = chartConfig }) {
+  const visibleCharts = visibleKeys?.length ? charts.filter(item => visibleKeys.includes(item.key)) : charts
   return <section className="report-chart-grid">
     {visibleCharts.map(item => <ChartCard key={item.key} title={item.title} subtitle={item.subtitle} icon={item.icon}>
       {item.donut

@@ -1,10 +1,11 @@
-import { Award, BookOpenCheck, CheckCircle2, ClipboardCheck, FileBarChart, ShieldAlert, ShieldCheck, Target, TrendingUp, UserCheck, Wallet } from 'lucide-react'
-import { useMemo } from 'react'
+import { Award, BookOpenCheck, CheckCircle2, ClipboardCheck, Clock3, FileBarChart, FileWarning, ShieldAlert, ShieldCheck, Target, TrendingUp, UserCheck, Wallet } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { isInProgressAuditStatus, useAudits } from '../audits/AuditContext'
 import { filterByUserAccess, getRoleProfile, useAuth } from '../auth/AuthContext'
 import { PageHeader, Progress, StatusBadge } from '../components/UI'
 import { useCapas } from '../capa/CapaContext'
+import { requireSupabase } from '../supabaseClient'
 import { useYokoten } from '../yokoten/YokotenContext'
 
 const emptyMessage = 'No data yet'
@@ -51,6 +52,19 @@ function groupAverage(rows, key) {
   return [...groups.entries()]
     .map(([name, value]) => ({ name, score: Math.round(value.total / value.count), count: value.count }))
     .sort((a, b) => b.score - a.score)
+}
+
+function averageLifecycle(rows, key) {
+  const values = rows.map(item => Number(item[key])).filter(Number.isFinite)
+  if (!values.length) return null
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
+}
+
+function withinCurrentMonth(value) {
+  const date = parseDate(value)
+  if (!date) return false
+  const now = new Date()
+  return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()
 }
 
 function Kpi({ label, value, meta, icon: Icon, tone = 'blue', onClick }) {
@@ -104,6 +118,32 @@ export default function Dashboard() {
   const { audits } = useAudits()
   const { capas } = useCapas()
   const { stories } = useYokoten()
+  const [lifecycleRows, setLifecycleRows] = useState([])
+
+  useEffect(() => {
+    if (!['ceo', 'group-functional-hod'].includes(roleProfile.id)) {
+      setLifecycleRows([])
+      return
+    }
+
+    let mounted = true
+    async function loadLifecycle() {
+      try {
+        const client = requireSupabase()
+        const { data, error } = await client.from('audit_response_lifecycle_analytics').select('*').order('created_at', { ascending: false })
+        if (error) throw error
+        if (mounted) setLifecycleRows(data || [])
+      } catch (loadError) {
+        console.error('Dashboard lifecycle load failed', loadError)
+        if (mounted) setLifecycleRows([])
+      }
+    }
+
+    loadLifecycle()
+    return () => {
+      mounted = false
+    }
+  }, [roleProfile.id])
 
   const scopedAudits = useMemo(() => {
     if (['system-admin', 'ceo', 'group-disha'].includes(roleProfile.id)) return audits
@@ -162,6 +202,46 @@ export default function Dashboard() {
     }
   }, [scopedAudits, scopedCapas])
 
+  const scopedLifecycleRows = useMemo(() => {
+    if (roleProfile.id === 'ceo') return lifecycleRows
+    if (roleProfile.id === 'group-functional-hod') {
+      return filterByUserAccess(user, lifecycleRows, item => ({ department: item.department, location: item.location }))
+    }
+    return []
+  }, [lifecycleRows, roleProfile.id, user])
+
+  const lifecycleDerived = useMemo(() => {
+    const openRows = scopedLifecycleRows.filter(item => !item.completed_at)
+    const pendingFinancialApprovals = openRows.filter(item => String(item.current_stage || '').toLowerCase().includes('financial approval'))
+    const implementationPending = openRows.filter(item => String(item.current_stage || '').toLowerCase() === 'implementation pending')
+    const verificationPending = openRows.filter(item => String(item.current_stage || '').toLowerCase() === 'verification pending')
+    const overdueActions = openRows.filter(item => Boolean(item.is_overdue))
+    const oldestActions = [...openRows].sort((a, b) => Number(b.action_age_days || 0) - Number(a.action_age_days || 0)).slice(0, 10)
+    const departmentClosure = groupAverage(
+      scopedLifecycleRows.filter(item => Number.isFinite(Number(item.closure_time_days))).map(item => ({ department: item.department, score: Number(item.closure_time_days) })),
+      'department'
+    )
+    const locationClosure = groupAverage(
+      scopedLifecycleRows.filter(item => Number.isFinite(Number(item.closure_time_days))).map(item => ({ location: item.location, score: Number(item.closure_time_days) })),
+      'location'
+    )
+
+    return {
+      averageClosureTime: averageLifecycle(scopedLifecycleRows, 'closure_time_days'),
+      averageFinancialApprovalTime: averageLifecycle(scopedLifecycleRows.filter(item => item.monetary_support_required), 'financial_approval_time_days'),
+      averageImplementationTime: averageLifecycle(scopedLifecycleRows.filter(item => item.implementation_completed_at), 'implementation_time_days'),
+      openRows,
+      pendingFinancialApprovals,
+      implementationPending,
+      verificationPending,
+      overdueActions,
+      oldestActions,
+      departmentClosure,
+      locationClosure,
+      actionsClosedThisMonth: scopedLifecycleRows.filter(item => withinCurrentMonth(item.completed_at)),
+    }
+  }, [scopedLifecycleRows])
+
   const shortcuts = roleProfile.navigation
     .filter(item => item.feature !== 'dashboard')
     .slice(0, 4)
@@ -191,9 +271,13 @@ export default function Dashboard() {
     ],
     ceo: [
       { label: 'Overall Compliance', value: derived.complianceScore === null ? emptyMessage : `${derived.complianceScore}%`, meta: 'Submitted audits only', icon: Award, tone: 'green', path: '/reports' },
-      { label: 'Pending Financial Approvals', value: String(derived.approvalPending.length), meta: 'Requires executive attention', icon: Wallet, tone: 'amber', path: '/action-center' },
+      { label: 'Pending Financial Approvals', value: String(lifecycleDerived.pendingFinancialApprovals.length || derived.approvalPending.length), meta: 'Requires executive attention', icon: Wallet, tone: 'amber', path: '/reports' },
       { label: 'Overdue CAPA', value: String(derived.overdueActions.length), meta: 'Past target date', icon: ShieldAlert, tone: 'red', path: '/action-center' },
       { label: 'Repeat Findings', value: String(derived.repeatFindings.length), meta: 'Reoccurring issues', icon: TrendingUp, tone: 'blue', path: '/reports' },
+      { label: 'Avg Closure Time', value: lifecycleDerived.averageClosureTime === null ? emptyMessage : `${lifecycleDerived.averageClosureTime}d`, meta: 'NG assigned to closure', icon: Clock3, tone: 'green', path: '/reports' },
+      { label: 'Avg Financial Approval', value: lifecycleDerived.averageFinancialApprovalTime === null ? emptyMessage : `${lifecycleDerived.averageFinancialApprovalTime}d`, meta: 'Monetary approvals', icon: Wallet, tone: 'blue', path: '/reports' },
+      { label: 'Avg Implementation', value: lifecycleDerived.averageImplementationTime === null ? emptyMessage : `${lifecycleDerived.averageImplementationTime}d`, meta: 'After financial approval', icon: Target, tone: 'blue', path: '/reports' },
+      { label: 'Closed This Month', value: String(lifecycleDerived.actionsClosedThisMonth.length), meta: 'NG closures this month', icon: CheckCircle2, tone: 'green', path: '/reports' },
     ],
     'group-disha': [
       { label: 'Audits Monitored', value: String(scopedAudits.length), meta: 'All visible audits', icon: ClipboardCheck, tone: 'blue', path: '/management-review' },
@@ -203,12 +287,14 @@ export default function Dashboard() {
     ],
     'group-functional-hod': [
       { label: 'Total NG', value: String(derived.totalNg), meta: 'In your department scope', icon: ShieldAlert, tone: 'blue', path: '/reports' },
-      { label: 'Open CAPA', value: String(derived.activeActions.length), meta: 'Department CAPA under review', icon: Target, tone: 'amber', path: '/action-center' },
-      { label: 'Overdue Actions', value: String(derived.overdueActions.length), meta: 'Escalation needed', icon: ShieldAlert, tone: 'red', path: '/action-center' },
-      { label: 'Pending Review', value: String(derived.approvalPending.length), meta: 'Awaiting review or approval', icon: UserCheck, tone: 'amber', path: '/action-center' },
-      { label: 'Closed This Month', value: String(derived.closedThisMonth.length), meta: 'Department closures this month', icon: CheckCircle2, tone: 'green', path: '/reports' },
+      { label: 'Open CAPA', value: String(lifecycleDerived.openRows.length || derived.activeActions.length), meta: 'Department CAPA under review', icon: Target, tone: 'amber', path: '/reports' },
+      { label: 'Overdue Actions', value: String(lifecycleDerived.overdueActions.length || derived.overdueActions.length), meta: 'Escalation needed', icon: ShieldAlert, tone: 'red', path: '/reports' },
+      { label: 'Pending Review', value: String((lifecycleDerived.pendingFinancialApprovals.length + lifecycleDerived.verificationPending.length) || derived.approvalPending.length), meta: 'Awaiting review or approval', icon: UserCheck, tone: 'amber', path: '/reports' },
+      { label: 'Closed This Month', value: String(lifecycleDerived.actionsClosedThisMonth.length || derived.closedThisMonth.length), meta: 'Department closures this month', icon: CheckCircle2, tone: 'green', path: '/reports' },
       { label: 'Repeat Findings', value: String(derived.repeatFindings.length), meta: 'Department recurrence', icon: TrendingUp, tone: 'blue', path: '/reports' },
-      { label: 'Avg Closure Days', value: derived.averageClosureDays === null ? emptyMessage : `${derived.averageClosureDays}d`, meta: 'Average time to close', icon: Award, tone: 'green', path: '/reports' },
+      { label: 'Avg Closure Days', value: lifecycleDerived.averageClosureTime === null ? (derived.averageClosureDays === null ? emptyMessage : `${derived.averageClosureDays}d`) : `${lifecycleDerived.averageClosureTime}d`, meta: 'Average time to close', icon: Award, tone: 'green', path: '/reports' },
+      { label: 'Implementation Pending', value: String(lifecycleDerived.implementationPending.length), meta: 'Waiting on action completion', icon: FileWarning, tone: 'amber', path: '/reports' },
+      { label: 'Verification Pending', value: String(lifecycleDerived.verificationPending.length), meta: 'Ready for closure review', icon: ShieldCheck, tone: 'blue', path: '/reports' },
     ],
     'branch-auditor': [
       { label: 'My Audits', value: String(scopedAudits.length), meta: 'Assigned audit scope', icon: ClipboardCheck, tone: 'blue', path: '/audits/new' },
@@ -260,6 +346,11 @@ export default function Dashboard() {
       <ListPanel eyebrow="DEPARTMENT RANKING" title="Top departments" rows={derived.departmentRanking.slice(0, 6)} getTitle={item => item.name} getSubtitle={item => `${item.count} submitted audit(s)`} getBadge={item => `${item.score}%`} onClick={() => navigate('/reports')} />
     </section>}
 
+    {roleProfile.id === 'ceo' && lifecycleDerived.oldestActions.length > 0 && <section className="exec-row exec-focus-grid role-home-grid">
+      <ListPanel eyebrow="LONGEST PENDING" title="Top 10 longest pending actions" rows={lifecycleDerived.oldestActions} getTitle={item => item.audit_number_display || item.audit_number || item.response_id} getSubtitle={item => `${item.department || 'No department'} | ${item.location || 'No location'} | ${item.question || 'No question'}`} getBadge={item => `${Math.round(Number(item.action_age_days) || 0)}d`} onClick={() => navigate('/reports')} />
+      <ListPanel eyebrow="CLOSURE TIME" title="Department-wise closure time" rows={lifecycleDerived.departmentClosure.slice(0, 10)} getTitle={item => item.name} getSubtitle={item => `${item.count} closed action(s)`} getBadge={item => `${item.score}d`} onClick={() => navigate('/reports')} />
+    </section>}
+
     {roleProfile.id === 'group-disha' && <section className="exec-row exec-focus-grid role-home-grid">
       <ListPanel eyebrow="REVIEW QUEUE" title="Open governance actions" rows={derived.activeActions.slice(0, 8)} getTitle={item => item.finding || item.issue || item.capaId} getSubtitle={item => `${item.departmentOwner || item.department || 'No department'} | ${item.status || 'Open'}`} getBadge={item => item.riskLevel || item.severity || 'Open'} onClick={() => navigate('/action-center')} />
       <ListPanel eyebrow="VERIFICATION" title="Awaiting verification" rows={derived.verificationPending.slice(0, 8)} getTitle={item => item.finding || item.issue || item.capaId} getSubtitle={item => `${item.auditId || item.capaId} | ${item.departmentOwner || item.department || 'No department'}`} getBadge={item => item.status} onClick={() => navigate('/verification')} />
@@ -270,8 +361,13 @@ export default function Dashboard() {
       <ListPanel eyebrow="ESCALATION" title="Overdue action list" rows={derived.overdueActions.slice(0, 8)} getTitle={item => item.finding || item.issue || item.capaId} getSubtitle={item => `${item.departmentOwner || item.department || 'No department'} | Due ${item.targetDate || item.due || 'Not set'}`} getBadge={item => item.riskLevel || item.severity || 'Open'} onClick={() => navigate('/action-center')} />
     </section>}
 
+    {roleProfile.id === 'group-functional-hod' && lifecycleDerived.oldestActions.length > 0 && <section className="exec-row exec-focus-grid role-home-grid">
+      <ListPanel eyebrow="OLDEST ACTIONS" title="Top 10 oldest actions" rows={lifecycleDerived.oldestActions} getTitle={item => item.question || item.audit_number_display || item.response_id} getSubtitle={item => `${item.location || 'No location'} | Due ${item.due_date || 'Not set'} | ${item.current_stage || 'Open'}`} getBadge={item => `${Math.round(Number(item.action_age_days) || 0)}d`} onClick={() => navigate('/reports')} />
+      <ListPanel eyebrow="LOCATION CLOSURE" title="Closure time by location" rows={lifecycleDerived.locationClosure.slice(0, 10)} getTitle={item => item.name} getSubtitle={item => `${item.count} closed action(s)`} getBadge={item => `${item.score}d`} onClick={() => navigate('/reports')} />
+    </section>}
+
     {roleProfile.id === 'branch-auditor' && <section className="exec-row exec-focus-grid role-home-grid">
-      <ListPanel eyebrow="MY AUDITS" title="Assigned audits" rows={scopedAudits.slice(0, 8)} getTitle={item => item.title || item.id} getSubtitle={item => `${item.department || 'No department'} | ${item.status || 'Draft'}`} getBadge={item => Number.isFinite(Number(item.score)) ? `${item.score}%` : item.status || 'Draft'} onClick={() => navigate('/audits/new')} />
+      <ListPanel eyebrow="MY AUDITS" title="Assigned audits" rows={scopedAudits.slice(0, 8)} getTitle={item => item.title || item.id} getSubtitle={item => `${item.auditNumber || item.auditId || item.id} | ${item.department || 'No department'} | ${item.status || 'Draft'}`} getBadge={item => Number.isFinite(Number(item.score)) ? `${item.score}%` : item.status || 'Draft'} onClick={() => navigate('/audits/new')} />
       <ListPanel eyebrow="FINDINGS" title="Recent findings requiring follow-up" rows={derived.activeActions.slice(0, 8)} getTitle={item => item.finding || item.issue || item.capaId} getSubtitle={item => `${item.auditId || item.capaId} | ${item.departmentOwner || item.department || 'No department'}`} getBadge={item => item.status || 'Open'} onClick={() => navigate('/verification')} />
     </section>}
 
@@ -281,12 +377,12 @@ export default function Dashboard() {
     </section>}
 
     {roleProfile.id === 'system-admin' && <section className="exec-row exec-focus-grid role-home-grid">
-      <ListPanel eyebrow="AUDIT CONTROL" title="Recent audits" rows={scopedAudits.slice(0, 8)} getTitle={item => item.title || item.id} getSubtitle={item => `${item.location || 'No location'} | ${item.department || 'No department'}`} getBadge={item => item.status || 'Draft'} onClick={() => navigate('/audits/new')} />
+      <ListPanel eyebrow="AUDIT CONTROL" title="Recent audits" rows={scopedAudits.slice(0, 8)} getTitle={item => item.title || item.id} getSubtitle={item => `${item.auditNumber || item.auditId || item.id} | ${item.location || 'No location'} | ${item.department || 'No department'}`} getBadge={item => item.status || 'Draft'} onClick={() => navigate('/audits/new')} />
       <ListPanel eyebrow="REPORTING" title="Action exposure by location" rows={derived.actionByLocation.slice(0, 8)} getTitle={item => item.name} getSubtitle={item => `${item.count} open action(s)`} getBadge={item => item.count} onClick={() => navigate('/reports')} />
     </section>}
 
     {roleProfile.id === 'viewer' && <section className="exec-row exec-focus-grid role-home-grid">
-      <ListPanel eyebrow="AUDIT HISTORY" title="Recent audits" rows={scopedAudits.slice(0, 8)} getTitle={item => item.title || item.id} getSubtitle={item => `${item.location || 'No location'} | ${item.status || 'Draft'}`} getBadge={item => Number.isFinite(Number(item.score)) ? `${item.score}%` : item.status || 'Draft'} onClick={() => navigate('/reports')} />
+      <ListPanel eyebrow="AUDIT HISTORY" title="Recent audits" rows={scopedAudits.slice(0, 8)} getTitle={item => item.title || item.id} getSubtitle={item => `${item.auditNumber || item.auditId || item.id} | ${item.location || 'No location'} | ${item.status || 'Draft'}`} getBadge={item => Number.isFinite(Number(item.score)) ? `${item.score}%` : item.status || 'Draft'} onClick={() => navigate('/reports')} />
       <ListPanel eyebrow="REPORTING" title="Read-only findings view" rows={derived.activeActions.slice(0, 8)} getTitle={item => item.finding || item.issue || item.capaId} getSubtitle={item => `${item.departmentOwner || item.department || 'No department'} | ${item.status || 'Open'}`} getBadge={item => item.riskLevel || item.severity || 'Open'} onClick={() => navigate('/reports')} />
     </section>}
 

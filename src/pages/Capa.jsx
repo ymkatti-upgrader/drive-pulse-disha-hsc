@@ -81,9 +81,11 @@ export default function CapaTracker() {
         const client = requireSupabase()
         const adminView = canManageDishaWorkflow(user)
         const auditorView = canViewAuditModule(user)
+        const stableSelect = 'id, audit_id, audit_uuid, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, action_status, status, created_at, updated_at, audit_location, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, actual_closure_date, responded_by'
+        const legacySelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, action_status, status, created_at, updated_at, audit_location, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, actual_closure_date, responded_by'
         let query = client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, current_condition_observed, tentative_closing_date, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, result, action_status, status, created_at, updated_at, audit_location, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, actual_closure_date, responded_by')
+          .select(stableSelect)
           .eq('result', 'NG')
 
         if (!adminView && !auditorView) {
@@ -95,11 +97,27 @@ export default function CapaTracker() {
           query = query.or(assignedFilters || `assigned_pic_user_id.eq.${user.id}`)
         }
 
-        const { data, error } = await query
-        if (error) throw error
+        let result = await query
+        if (result.error && /column .* does not exist/i.test(result.error.message || '')) {
+          query = client
+            .from('audit_responses')
+            .select(legacySelect)
+            .eq('result', 'NG')
+
+          if (!adminView && !auditorView) {
+            const assignedFilters = [
+              `assigned_pic_user_id.eq.${user.id}`,
+              `pic_for_ng_user_id.eq.${user.id}`,
+              user.mobile_no ? `pic_for_ng_mobile.eq.${user.mobile_no}` : '',
+            ].filter(Boolean).join(',')
+            query = query.or(assignedFilters || `assigned_pic_user_id.eq.${user.id}`)
+          }
+          result = await query
+        }
+        if (result.error) throw result.error
         if (!cancelled) {
-          const scopedRows = adminView ? data || [] : (data || []).filter(row => {
-            const audit = audits.find(item => item.id === row.audit_id)
+          const scopedRows = adminView ? result.data || [] : (result.data || []).filter(row => {
+            const audit = audits.find(item => item.id === (row.audit_uuid || row.audit_id))
             return responseBelongsToPic(row, user) || (auditorView && responseBelongsToAuditor(row, audit, user))
           })
           setAssignedNgRows(scopedRows)
@@ -119,7 +137,7 @@ export default function CapaTracker() {
   }, [user, audits])
 
   const assignedImprovements = useMemo(() => assignedNgRows.map(row => {
-    const audit = audits.find(item => item.id === row.audit_id) || {}
+    const audit = audits.find(item => item.id === (row.audit_uuid || row.audit_id)) || {}
     const department = cleanDisplayValue(audit.department || (Array.isArray(audit.departments) ? audit.departments.slice(0, 2).join(', ') : audit.departments))
     const location = cleanDisplayValue(audit.location || row.audit_location)
     const dq = cleanDisplayValue(row.dq_question_num)
@@ -128,7 +146,7 @@ export default function CapaTracker() {
       capaId: safeJoin(['NG Action', dq, subQuestion ? `Q${subQuestion}` : '']),
       id: `NG-${row.id}`,
       finding: cleanDisplayValue(row.sub_question_text, 'Assigned NG improvement'),
-      auditId: cleanDisplayValue(row.audit_id),
+      auditId: cleanDisplayValue(audit.auditNumber || audit.auditId || audit.audit_number || audit.audit_no || row.audit_id),
       dishaQuestionNo: dq,
       subQuestionNo: subQuestion,
       departmentOwner: department,

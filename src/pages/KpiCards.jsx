@@ -1,5 +1,5 @@
 import { ArrowRight, Banknote, BadgeCheck, CalendarClock, CheckCircle2, ClipboardList, FileWarning, ShieldAlert, TimerReset, UserRoundSearch } from 'lucide-react'
-import { formatCurrency } from './reportUtils'
+import { formatCurrency, formatDurationDays } from './reportUtils'
 
 const kpis = [
   { key: 'totalAudits', label: 'Total Audits', icon: ClipboardList, tone: 'blue' },
@@ -16,12 +16,16 @@ const kpis = [
   { key: 'totalMonetaryValueApproved', label: 'Total Monetary Value Approved', icon: Banknote, tone: 'green', currency: true },
 ]
 
-export default function KpiCards({ summary, onSelectKpi, visibleKeys }) {
-  const visibleCards = visibleKeys?.length ? kpis.filter(card => visibleKeys.includes(card.key)) : kpis
+export default function KpiCards({ summary, onSelectKpi, visibleKeys, cards = kpis }) {
+  const visibleCards = visibleKeys?.length ? cards.filter(card => visibleKeys.includes(card.key)) : cards
   return <section className="report-kpi-grid">
     {visibleCards.map(card => {
       const Icon = card.icon
-      const value = card.currency ? formatCurrency(summary[card.key]) : summary[card.key]
+      const value = card.currency
+        ? formatCurrency(summary[card.key])
+        : card.duration
+          ? formatDurationDays(summary[card.key], card.naLabel || '-')
+          : summary[card.key]
       return <button key={card.key} type="button" className={`card report-kpi ${card.tone}`} onClick={() => onSelectKpi(card)}>
         <div className="report-kpi-icon"><Icon size={18} /></div>
         <div className="report-kpi-copy">

@@ -414,7 +414,7 @@ function isValidNgAction(item, audit = {}) {
   const hasWorkflowStatus = normalizeText(item.result) === 'ng' || hasMeaningfulValue(item.action_status) || hasMeaningfulValue(item.status)
   const hasQuestion = Boolean(resolveActionQuestion(item)) || hasMeaningfulValue(item.checklist_id) || hasMeaningfulValue(item.dq_question_num) || hasMeaningfulValue(item.sub_question_num)
   const hasPicAssignment = hasAssignedPic(item)
-  const hasAuditId = hasMeaningfulValue(item.audit_id)
+  const hasAuditId = hasMeaningfulValue(item.audit_uuid || item.audit_id)
   return hasWorkflowStatus && hasQuestion && hasPicAssignment && hasAuditId
 }
 
@@ -552,7 +552,7 @@ export default function ActionCenter() {
       setError('')
       try {
         const client = requireSupabase()
-        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, audit_department, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, group_disha_approval_status, group_disha_approved_by, group_disha_approved_at, group_disha_approval_remarks, group_disha_comments, group_disha_review_required, group_disha_review_status, group_disha_reviewed_by, group_disha_review_date, group_disha_review_remarks, ceo_approval_required, ceo_approval_status, ceo_approved_by, ceo_approved_at, ceo_comments, ceo_review_status, ceo_reviewed_by, ceo_review_date, ceo_review_remarks, approval_level, approval_history, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files, is_void, void_reason'
+        const stableSelect = 'id, audit_id, audit_uuid, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, audit_department, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, group_disha_approval_status, group_disha_approved_by, group_disha_approved_at, group_disha_approval_remarks, group_disha_comments, group_disha_review_required, group_disha_review_status, group_disha_reviewed_by, group_disha_review_date, group_disha_review_remarks, ceo_approval_required, ceo_approval_status, ceo_approved_by, ceo_approved_at, ceo_comments, ceo_review_status, ceo_reviewed_by, ceo_review_date, ceo_review_remarks, approval_level, approval_history, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files, is_void, void_reason'
         const legacySelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, audit_department, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, group_disha_approval_status, group_disha_approved_by, group_disha_approved_at, group_disha_approval_remarks, ceo_approval_required, ceo_approval_status, ceo_approved_by, ceo_approved_at, ceo_comments, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files, is_void, void_reason'
         let allNgResult = await client
           .from('audit_responses')
@@ -572,7 +572,7 @@ export default function ActionCenter() {
           const fetchedRows = allNgResult.data || []
           const nonVoidRows = fetchedRows.filter(item => item.is_void !== true)
           const validRows = nonVoidRows.filter(item => {
-            const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
+            const audit = audits.find(auditItem => auditItem.id === (item.audit_uuid || item.audit_id)) || {}
             return isValidNgAction(item, audit)
           })
           const assignedRows = validRows.filter(item => isAssignedToUser(item, activeUser))
@@ -596,6 +596,7 @@ export default function ActionCenter() {
           console.info('FIRST 5 ROWS WITH ASSIGNMENT FIELDS', fetchedRows.slice(0, 5).map(row => ({
             id: row.id,
             audit_id: row.audit_id,
+            audit_uuid: row.audit_uuid,
             sub_question_text: row.sub_question_text,
             audit_location: row.audit_location,
             audit_department: row.audit_department,
@@ -623,15 +624,15 @@ export default function ActionCenter() {
   }, [adminView, auditorView, reviewerView, expenseApproverView, user, currentUser, audits, refreshKey])
 
   const hubCards = useMemo(() => ngItems.map(item => {
-    const audit = audits.find(auditItem => auditItem.id === item.audit_id) || {}
+    const audit = audits.find(auditItem => auditItem.id === (item.audit_uuid || item.audit_id)) || {}
     const fullDepartment = resolveActionDepartment(item, audit)
     const workflowStatus = item.action_status || item.closure_status || ''
     const status = getSimpleStatus(workflowStatus, item)
     const targetDate = formatDate(item.tentative_closing_date) || 'Not available'
     const card = {
       id: item.id,
-      rawAuditId: item.audit_id || '',
-      auditId: isUuid(item.audit_id) ? 'Not available' : cleanDisplayValue(item.audit_id),
+      rawAuditId: item.audit_uuid || item.audit_id || '',
+      auditId: cleanDisplayValue(audit.auditNumber || audit.auditId || audit.audit_number || audit.audit_no || item.audit_id),
       location: cleanDisplayValue(resolveActionLocation(item, audit)),
       department: shortDepartment(resolveActionDepartment(item, audit)),
       fullDepartment: cleanDisplayValue(fullDepartment),

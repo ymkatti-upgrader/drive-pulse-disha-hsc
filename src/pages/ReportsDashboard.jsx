@@ -1,4 +1,4 @@
-import { Download, FileDown, RefreshCcw, ShieldAlert } from 'lucide-react'
+import { Banknote, Clock3, Download, FileDown, RefreshCcw, ShieldAlert, TimerReset } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { canAccessScope, canManageDishaWorkflow, canViewReports, getAccessScopeValues, getPrimaryRole, getRoleProfile, useAuth } from '../auth/AuthContext'
 import { PageHeader, StatusBadge } from '../components/UI'
@@ -7,7 +7,7 @@ import KpiCards from './KpiCards'
 import ReportCharts from './ReportCharts'
 import ReportFilters from './ReportFilters'
 import ReportTables from './ReportTables'
-import { buildDashboardSnapshot, buildReportRows, buildSummary, filterRows, formatDate, formatDateTime, sortRows } from './reportUtils'
+import { buildDashboardSnapshot, buildLifecycleSnapshot, buildLifecycleSummary, buildReportRows, buildSummary, filterRows, formatDate, formatDateTime, sortRows } from './reportUtils'
 import { exportDashboardSummaryPdf, exportRowsToCsv, exportRowsToExcel } from './exportUtils'
 
 const emptyFilters = {
@@ -35,15 +35,16 @@ const tabConfig = [
   { key: 'department', title: 'Department Performance', dataset: 'audits' },
   { key: 'pic', title: 'PIC Performance', dataset: 'ng' },
   { key: 'repeat', title: 'Repeat Findings', dataset: 'ng' },
+  { key: 'lifecycle', title: 'Action Lifecycle Report', dataset: 'ng' },
   { key: 'monetary', title: 'Monetary Support', dataset: 'all' },
   { key: 'overdue', title: 'Overdue & Ageing', dataset: 'ng' },
   { key: 'evidence', title: 'Evidence Status', dataset: 'ng' },
 ]
 
 const roleTabConfig = {
-  'group-functional-hod': ['executive', 'ng', 'capa', 'location', 'repeat', 'overdue'],
+  'group-functional-hod': ['executive', 'ng', 'capa', 'location', 'repeat', 'lifecycle', 'overdue'],
   'location-functional-hod': ['executive', 'ng', 'capa', 'overdue', 'repeat'],
-  viewer: ['executive', 'audit', 'ng', 'repeat'],
+  viewer: ['executive', 'audit', 'ng', 'repeat', 'lifecycle'],
 }
 
 const roleKpiConfig = {
@@ -139,12 +140,32 @@ function buildTableData(tabKey, rows, summaryRows) {
   if (tabKey === 'audit') return summaryRows
   if (tabKey === 'location' || tabKey === 'department') return summaryRows
   if (tabKey === 'repeat') return buildDedupedRepeatRows(rows)
+  if (tabKey === 'lifecycle') return rows.filter(row => String(row.result).toUpperCase() === 'NG')
   if (tabKey === 'monetary') return rows.filter(row => row.monetarySupportRequired)
   if (tabKey === 'evidence') return rows.filter(row => row.evidenceCount > 0 || row.quotationCount > 0)
   if (tabKey === 'overdue') return rows.filter(row => row.overdue)
   if (tabKey === 'ng' || tabKey === 'capa' || tabKey === 'root-cause' || tabKey === 'pic') return rows.filter(row => String(row.result).toUpperCase() === 'NG')
   return rows
 }
+
+const lifecycleKpiConfig = [
+  { key: 'averageClosureTime', label: 'Average Closure Time', icon: TimerReset, tone: 'green', duration: true },
+  { key: 'averageFinancialApprovalTime', label: 'Average Financial Approval Time', icon: Banknote, tone: 'amber', duration: true, naLabel: 'Not Applicable' },
+  { key: 'averageImplementationTime', label: 'Average Implementation Time', icon: Clock3, tone: 'blue', duration: true, naLabel: 'Not Applicable' },
+  { key: 'averageVerificationTime', label: 'Average Verification Time', icon: ShieldAlert, tone: 'blue', duration: true },
+  { key: 'longestPendingAction', label: 'Longest Pending Action', icon: ShieldAlert, tone: 'red', duration: true },
+  { key: 'oldestOpenNg', label: 'Oldest Open NG', icon: ShieldAlert, tone: 'red', duration: true },
+  { key: 'actionsClosedThisMonth', label: 'Actions Closed This Month', icon: TimerReset, tone: 'green' },
+]
+
+const lifecycleChartConfig = [
+  { key: 'closureTimeByDepartment', title: 'CLOSURE', subtitle: 'Average closure time by department', icon: TimerReset, dataKey: 'closureTimeByDepartment', formatter: value => `${value} day(s)`, focus: 'Closure time by department' },
+  { key: 'closureTimeByLocation', title: 'LOCATION', subtitle: 'Average closure time by location', icon: TimerReset, dataKey: 'closureTimeByLocation', formatter: value => `${value} day(s)`, focus: 'Closure time by location' },
+  { key: 'financialApprovalTrend', title: 'FINANCIAL APPROVAL', subtitle: 'Financial approval time trend', icon: Banknote, dataKey: 'financialApprovalTrend', formatter: value => `${value} day(s)`, focus: 'Financial approval trend' },
+  { key: 'implementationTimeByPic', title: 'IMPLEMENTATION', subtitle: 'Implementation time by PIC', icon: Clock3, dataKey: 'implementationTimeByPic', formatter: value => `${value} day(s)`, focus: 'Implementation time by PIC' },
+  { key: 'verificationTimeTrend', title: 'VERIFICATION', subtitle: 'Verification time trend', icon: ShieldAlert, dataKey: 'verificationTimeTrend', formatter: value => `${value} day(s)`, focus: 'Verification time trend' },
+  { key: 'actionAgeing', title: 'AGEING', subtitle: 'Action ageing', icon: ShieldAlert, dataKey: 'actionAgeing', donut: true, focus: 'Action ageing' },
+]
 
 function buildFilterOptions(rows, audits) {
   return {
@@ -193,7 +214,7 @@ export default function ReportsDashboard() {
   const [sortState, setSortState] = useState({ key: 'createdAt', direction: 'desc' })
   const [pageByTab, setPageByTab] = useState({})
   const [searchByTab, setSearchByTab] = useState({})
-  const [data, setData] = useState({ audits: [], rows: [], summaryRows: [], snapshot: null, options: null, summary: null })
+  const [data, setData] = useState({ audits: [], rows: [], summaryRows: [], snapshot: null, lifecycleSnapshot: null, options: null, summary: null, lifecycleSummary: null })
 
   const roleName = getPrimaryRole(user)
   const scopedDepartments = useMemo(() => getScopedDepartments(user, roleProfile.id), [roleProfile.id, user])
@@ -238,17 +259,22 @@ export default function ReportsDashboard() {
           .map(item => item.id)
         : []
 
-      let responseQuery = client.from('audit_responses').select('id, audit_id, checklist_id, result, sub_question_text, audit_location, audit_department, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, closure_status, verification_status, cause_category, monetary_support_required, expected_expense_amount, expense_category, expense_purpose, expense_approval_status, expense_approver_role, quotation_files, is_void, tentative_closing_date, actual_closure_date, updated_at, created_at, observation, comments, root_cause').order('created_at', { ascending: false })
-      let auditQuery = client.from('audits').select('id, audit_no, title, location_id, department_id, auditor_id, status, score, scheduled_date, started_at, submitted_at, completed_at, created_at, updated_at')
+      const stableResponseSelect = 'id, audit_id, audit_uuid, checklist_id, result, sub_question_text, audit_location, audit_department, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, closure_status, verification_status, cause_category, monetary_support_required, expected_expense_amount, expense_category, expense_purpose, expense_approval_status, expense_approver_role, quotation_files, is_void, tentative_closing_date, actual_closure_date, updated_at, created_at, observation, comments, root_cause'
+      const legacyResponseSelect = 'id, audit_id, checklist_id, result, sub_question_text, audit_location, audit_department, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, closure_status, verification_status, cause_category, monetary_support_required, expected_expense_amount, expense_category, expense_purpose, expense_approval_status, expense_approver_role, quotation_files, is_void, tentative_closing_date, actual_closure_date, updated_at, created_at, observation, comments, root_cause'
+      let responseQuery = client.from('audit_responses').select(stableResponseSelect).order('created_at', { ascending: false })
+      let lifecycleQuery = client.from('audit_response_lifecycle_analytics').select('*').order('created_at', { ascending: false })
+      let auditQuery = client.from('audits').select('id, audit_no, audit_number, title, location_id, department_id, auditor_id, status, score, scheduled_date, started_at, submitted_at, completed_at, created_at, updated_at')
       let findingQuery = client.from('audit_findings').select('id, audit_response_id, audit_id, checklist_id, location_id, owner_department_id, location_functional_hod_id, current_condition, gap_identified, auditor_comments, risk_level, status, target_date, closed_at, created_at, updated_at')
       let evidenceQuery = client.from('finding_evidence').select('id, finding_id, file_name, mime_type, file_size_bytes, storage_path, uploaded_at, evidence_stage, is_deleted').eq('is_deleted', false)
 
       if (departmentFilters.length) {
         responseQuery = responseQuery.in('audit_department', departmentFilters)
+        lifecycleQuery = lifecycleQuery.in('department', departmentFilters)
       }
 
       if (locationFilters.length) {
         responseQuery = responseQuery.in('audit_location', locationFilters)
+        lifecycleQuery = lifecycleQuery.in('location', locationFilters)
       }
 
       if (allowedDepartmentIds.length) {
@@ -263,6 +289,7 @@ export default function ReportsDashboard() {
 
       if (filters.startDate) {
         responseQuery = responseQuery.gte('created_at', filters.startDate)
+        lifecycleQuery = lifecycleQuery.gte('created_at', filters.startDate)
         auditQuery = auditQuery.gte('created_at', filters.startDate)
         findingQuery = findingQuery.gte('created_at', filters.startDate)
         evidenceQuery = evidenceQuery.gte('uploaded_at', filters.startDate)
@@ -270,14 +297,15 @@ export default function ReportsDashboard() {
 
       if (filters.endDate) {
         responseQuery = responseQuery.lte('created_at', `${filters.endDate}T23:59:59`)
+        lifecycleQuery = lifecycleQuery.lte('created_at', `${filters.endDate}T23:59:59`)
         auditQuery = auditQuery.lte('created_at', `${filters.endDate}T23:59:59`)
         findingQuery = findingQuery.lte('created_at', `${filters.endDate}T23:59:59`)
         evidenceQuery = evidenceQuery.lte('uploaded_at', `${filters.endDate}T23:59:59`)
       }
 
-      const [auditsResult, responsesResult, findingsResult, usersResult, mappingsResult, departmentsResult, locationsResult, evidenceResult] = await Promise.all([
+      let responsesResult
+      const [auditsResult, findingsResult, usersResult, mappingsResult, departmentsResult, locationsResult, evidenceResult] = await Promise.all([
         auditQuery,
-        responseQuery,
         findingQuery,
         client.from('app_users').select('id, employee_name, mobile_no, active'),
         client.from('user_access_mappings').select('user_id, role, department, location, user_type, active').eq('active', true),
@@ -286,12 +314,30 @@ export default function ReportsDashboard() {
         evidenceQuery,
       ])
 
+      responsesResult = await responseQuery
+      if (responsesResult.error && /column .* does not exist/i.test(responsesResult.error.message || '')) {
+        let legacyQuery = client.from('audit_responses').select(legacyResponseSelect).order('created_at', { ascending: false })
+        if (departmentFilters.length) legacyQuery = legacyQuery.in('audit_department', departmentFilters)
+        if (locationFilters.length) legacyQuery = legacyQuery.in('audit_location', locationFilters)
+        if (filters.startDate) legacyQuery = legacyQuery.gte('created_at', filters.startDate)
+        if (filters.endDate) legacyQuery = legacyQuery.lte('created_at', `${filters.endDate}T23:59:59`)
+        responsesResult = await legacyQuery
+      }
+
       const anyError = [auditsResult, responsesResult, findingsResult, usersResult, mappingsResult, departmentsResult, locationsResult, evidenceResult].find(result => result.error)
       if (anyError?.error) throw anyError.error
 
+      let lifecycleData = []
+      const lifecycleResult = await lifecycleQuery
+      if (lifecycleResult.error) {
+        console.warn('Lifecycle analytics view unavailable', lifecycleResult.error)
+      } else {
+        lifecycleData = lifecycleResult.data || []
+      }
+
       const rawAudits = (auditsResult.data || []).map(row => ({
         ...row,
-        auditId: row.audit_no,
+        auditId: row.audit_number || row.audit_no,
         auditType: row.title,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -303,6 +349,7 @@ export default function ReportsDashboard() {
         audits: rawAudits.map(row => ({
           ...row,
           audit_no: row.audit_no,
+          audit_number: row.audit_number,
           title: row.title,
           location_id: row.location_id,
           department_id: row.department_id,
@@ -314,26 +361,31 @@ export default function ReportsDashboard() {
         departments: departmentsResult.data || [],
         locations: locationsResult.data || [],
         evidence: evidenceResult.data || [],
+        lifecycle: lifecycleData,
       }).filter(row => accessibleRow(user, row))
 
       const summaryRows = groupSummaryRows(joinedRows)
       const filteredRows = filterRows(joinedRows, filters)
       const snapshot = buildDashboardSnapshot({ audits: summaryRows, rows: filteredRows })
       const summary = buildSummary(filteredRows)
+      const lifecycleSummary = buildLifecycleSummary(filteredRows)
+      const lifecycleSnapshot = buildLifecycleSnapshot(filteredRows)
 
       setData({
         audits: summaryRows,
         rows: joinedRows,
         summaryRows,
         snapshot,
+        lifecycleSnapshot,
         options: buildFilterOptions(joinedRows, summaryRows),
         summary,
+        lifecycleSummary,
       })
       setLastRefreshed(formatDateTime(new Date()))
     } catch (loadError) {
       console.error('Reports dashboard load failed', loadError)
       setError(loadError?.message || 'Unable to load report data.')
-      setData(current => ({ ...current, audits: [], rows: [], summaryRows: [], snapshot: null, options: null, summary: null }))
+      setData(current => ({ ...current, audits: [], rows: [], summaryRows: [], snapshot: null, lifecycleSnapshot: null, options: null, summary: null, lifecycleSummary: null }))
     } finally {
       setLoading(false)
     }
@@ -348,6 +400,8 @@ export default function ReportsDashboard() {
   const filteredAudits = useMemo(() => filterRows(data.audits, filters), [data.audits, filters])
   const summary = useMemo(() => buildSummary(filteredRows), [filteredRows])
   const snapshot = useMemo(() => buildDashboardSnapshot({ audits: filteredAudits, rows: filteredRows }), [filteredAudits, filteredRows])
+  const lifecycleSummary = useMemo(() => buildLifecycleSummary(filteredRows), [filteredRows])
+  const lifecycleSnapshot = useMemo(() => buildLifecycleSnapshot(filteredRows), [filteredRows])
 
   const summaryRows = useMemo(() => {
     const source = tab === 'executive' ? filteredRows : buildTableData(tab, filteredRows, data.summaryRows)
@@ -438,16 +492,16 @@ export default function ReportsDashboard() {
         rows = base.filter(row => String(row.result).toUpperCase() === 'NG')
         break
       case 'openCapas':
-        rows = base.filter(row => String(row.result).toUpperCase() === 'NG' && !['closed', 'approved'].includes(String(row.closureStatus || '').toLowerCase()) && !row.actualClosureDate)
+        rows = base.filter(row => String(row.result).toUpperCase() === 'NG' && !['closed', 'approved'].includes(String(row.closureStatus || '').toLowerCase()) && !row.closureCompletedAt && !row.actualClosureDate)
         break
       case 'closedCapas':
-        rows = base.filter(row => String(row.result).toUpperCase() === 'NG' && (['closed', 'approved'].includes(String(row.closureStatus || '').toLowerCase()) || row.actualClosureDate))
+        rows = base.filter(row => String(row.result).toUpperCase() === 'NG' && (['closed', 'approved'].includes(String(row.closureStatus || '').toLowerCase()) || row.closureCompletedAt || row.actualClosureDate))
         break
       case 'overdueCapas':
         rows = base.filter(row => row.overdue)
         break
       case 'averageClosureDays':
-        rows = base.filter(row => String(row.result).toUpperCase() === 'NG' && row.actualClosureDate)
+        rows = base.filter(row => String(row.result).toUpperCase() === 'NG' && (row.closureCompletedAt || row.actualClosureDate))
         break
       case 'repeatFindings':
         rows = buildDedupedRepeatRows(base)
@@ -457,6 +511,25 @@ export default function ReportsDashboard() {
         break
       case 'pendingCeoApproval':
         rows = base.filter(row => row.monetarySupportRequired && String(row.expenseApprovalStatus || '').toLowerCase() === 'pending ceo approval')
+        break
+      case 'averageClosureTime':
+        rows = base.filter(row => row.closureCompletedAt)
+        break
+      case 'averageFinancialApprovalTime':
+        rows = base.filter(row => row.monetarySupportRequired && row.ceoApprovedAt)
+        break
+      case 'averageImplementationTime':
+        rows = base.filter(row => row.implementationCompletedAt)
+        break
+      case 'averageVerificationTime':
+        rows = base.filter(row => row.closureCompletedAt)
+        break
+      case 'longestPendingAction':
+      case 'oldestOpenNg':
+        rows = base.filter(row => !row.closureCompletedAt && String(row.result).toUpperCase() === 'NG')
+        break
+      case 'actionsClosedThisMonth':
+        rows = base.filter(row => row.closureCompletedAt)
         break
       case 'totalMonetaryValueRequested':
       case 'totalMonetaryValueApproved':
@@ -527,6 +600,19 @@ export default function ReportsDashboard() {
       <section className="card report-drilldown">
         <div className="report-drilldown-head">
           <div>
+            <span className="eyebrow">ACTION LIFECYCLE ANALYTICS</span>
+            <h2>Approval, implementation, verification, and closure timing</h2>
+            <p>System-captured lifecycle timestamps for NG actions.</p>
+          </div>
+        </div>
+      </section>
+
+      <KpiCards summary={lifecycleSummary} onSelectKpi={handleSelectKpi} cards={lifecycleKpiConfig} />
+      <ReportCharts snapshot={lifecycleSnapshot} onSelectGroup={handleSelectGroup} charts={lifecycleChartConfig} />
+
+      <section className="card report-drilldown">
+        <div className="report-drilldown-head">
+          <div>
             <span className="eyebrow">DRILL-DOWN</span>
             <h2>{focus ? `${focus.label} - ${focus.value}` : 'Filtered report rows'}</h2>
             <p>{filteredRows.length} row(s) match the current filter set.</p>
@@ -587,6 +673,10 @@ export default function ReportsDashboard() {
           <div><span>Root Cause</span><strong>{detailRow.rootCause || '-'}</strong></div>
           <div><span>Monetary Support</span><strong>{detailRow.monetarySupportRequired ? 'Yes' : 'No'}</strong></div>
           <div><span>Expected Expense</span><strong>{detailRow.expectedExpenseAmount ? `INR ${Number(detailRow.expectedExpenseAmount).toLocaleString('en-IN')}` : '-'}</strong></div>
+          <div><span>Assigned Date</span><strong>{formatDate(detailRow.assignedAt)}</strong></div>
+          <div><span>Financial Approval Date</span><strong>{formatDate(detailRow.ceoApprovedAt, detailRow.monetarySupportRequired ? '-' : 'Not Applicable')}</strong></div>
+          <div><span>Implementation Date</span><strong>{formatDate(detailRow.implementationCompletedAt)}</strong></div>
+          <div><span>Closure Date</span><strong>{formatDate(detailRow.closureCompletedAt)}</strong></div>
         </div>
       </section>
     </div>}

@@ -247,13 +247,14 @@ function getNgActionWorkflowStatus(item) {
   return String(item?.picForNgUserId || item?.picForNgMobile || item?.picForNg || '').trim() ? 'Assigned' : 'Open'
 }
 
-function buildDraftPayload(items, auditId, respondedBy) {
+function buildDraftPayload(items, auditId, auditReference, respondedBy) {
   return items
     .filter(item => shouldPersistAuditResponse(item, auditId))
     .map(item => {
       const actionStatus = getNgActionWorkflowStatus(item)
       return {
-        audit_id: auditId,
+        audit_id: auditReference || auditId,
+        audit_uuid: isUuid(auditId) ? auditId : null,
         checklist_id: normalizeDraftValue(item.dbId),
         dq_question_num: normalizeDraftValue(item.dqQuestionNum || item.id || null),
         sub_question_num: normalizeDraftValue(Number.isFinite(item.displaySubQuestionNum) ? String(item.displaySubQuestionNum) : Number.isFinite(item.subQuestionNum) ? String(item.subQuestionNum) : null),
@@ -608,13 +609,23 @@ export default function ConductAudit() {
       if (!auditId || !items.length || !currentAudit) return
       try {
         const client = requireSupabase()
-        const { data, error: loadError } = await client
+        const stableSelect = 'id, audit_id, audit_uuid, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, audit_department, pic_for_ng, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at'
+        const legacySelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, audit_department, pic_for_ng, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at'
+        let draftResult = await client
           .from('audit_responses')
-          .select('id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, audit_department, pic_for_ng, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at')
-          .eq('audit_id', auditId)
+          .select(stableSelect)
+          .or(`audit_uuid.eq.${auditId},audit_id.eq.${auditId}`)
           .eq('is_void', false)
 
-        if (loadError) throw loadError
+        if (draftResult.error && /column .* does not exist/i.test(draftResult.error.message || '')) {
+          draftResult = await client
+            .from('audit_responses')
+            .select(legacySelect)
+            .eq('audit_id', auditId)
+            .eq('is_void', false)
+        }
+
+        if (draftResult.error) throw draftResult.error
 
         const backupKey = auditDraftStorageKey(auditId)
         const backupRows = (() => {
@@ -626,12 +637,17 @@ export default function ConductAudit() {
           }
         })()
 
-        const rows = (data && data.length) ? data : backupRows
+        const rows = (draftResult.data && draftResult.data.length) ? draftResult.data : backupRows
         if (cancelled) return
 
         setItems(current => {
           const merged = mergeDraftRows(current, rows)
-          lastDraftSignatureRef.current = JSON.stringify(buildDraftPayload(merged, auditId, user?.id || currentAudit?.auditor_id || ''))
+          lastDraftSignatureRef.current = JSON.stringify(buildDraftPayload(
+            merged,
+            auditId,
+            currentAudit?.auditNumber || currentAudit?.auditId || auditId,
+            user?.id || currentAudit?.auditor_id || '',
+          ))
           return merged
         })
         draftHydratedRef.current = true
@@ -644,7 +660,12 @@ export default function ConductAudit() {
           if (rows.length) {
             setItems(current => {
               const merged = mergeDraftRows(current, rows)
-              lastDraftSignatureRef.current = JSON.stringify(buildDraftPayload(merged, auditId, user?.id || currentAudit?.auditor_id || ''))
+              lastDraftSignatureRef.current = JSON.stringify(buildDraftPayload(
+                merged,
+                auditId,
+                currentAudit?.auditNumber || currentAudit?.auditId || auditId,
+                user?.id || currentAudit?.auditor_id || '',
+              ))
               return merged
             })
             draftHydratedRef.current = true
@@ -719,7 +740,8 @@ export default function ConductAudit() {
   const progress = completion.total ? Math.round(completion.completed / completion.total * 100) : 0
   const draftRespondedById = resolvedRespondedById || user?.id || currentAudit?.auditor_id || ''
   const draftStorageKey = useMemo(() => auditDraftStorageKey(auditId), [auditId])
-  const draftPayload = useMemo(() => buildDraftPayload(items, auditId, draftRespondedById), [items, auditId, draftRespondedById])
+  const draftAuditReference = currentAudit?.auditNumber || currentAudit?.auditId || auditId
+  const draftPayload = useMemo(() => buildDraftPayload(items, auditId, draftAuditReference, draftRespondedById), [items, auditId, draftAuditReference, draftRespondedById])
   const draftSignature = useMemo(() => JSON.stringify(draftPayload), [draftPayload])
   const currentDqLabel = activeGroup?.code || 'DQ'
   const currentDqTotalLabel = `DQ${String(dqGroups.length || 0).padStart(3, '0')}`
@@ -770,7 +792,7 @@ export default function ConductAudit() {
       })
       const { data: savedRows, error: saveError } = await client
         .from('audit_responses')
-        .upsert(draftPayload, { onConflict: 'audit_id,checklist_id' })
+        .upsert(draftPayload, { onConflict: 'audit_uuid,checklist_id' })
         .select('id, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_mobile, action_status')
       if (saveError) throw saveError
       ;(savedRows || [])
@@ -988,8 +1010,11 @@ export default function ConductAudit() {
     setDeleteMessage('')
     try {
       const client = requireSupabase()
-      const { error: responseError } = await client.from('audit_responses').delete().eq('audit_id', auditId)
-      if (responseError) throw responseError
+      let responseDelete = await client.from('audit_responses').delete().eq('audit_uuid', auditId)
+      if (responseDelete.error && /column .* does not exist/i.test(responseDelete.error.message || '')) {
+        responseDelete = await client.from('audit_responses').delete().eq('audit_id', auditId)
+      }
+      if (responseDelete.error) throw responseDelete.error
       const { error: capaError } = await deleteCapasByAudit(auditId)
       if (capaError) throw capaError
       const { error: auditError } = await deleteAudit(auditId)
@@ -1073,6 +1098,7 @@ export default function ConductAudit() {
       <div className="audit-progress-header-main">
         <button className="back-button" onClick={() => navigate('/audits/new')}><ChevronLeft size={18} /> Exit audit</button>
         <div className="audit-progress-header-copy audit-progress-header-copy--featured">
+          <small>{currentAudit?.auditNumber || currentAudit?.auditId || currentAudit?.id || 'Audit reference pending'}</small>
           <span>Current DQ</span>
           <strong>{currentDqLabel} / {currentDqTotalLabel}</strong>
           {isReadOnly && <small>Read-only View</small>}

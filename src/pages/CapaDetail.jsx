@@ -423,7 +423,7 @@ export default function CapaDetail() {
   }
 
   const details = [
-    ['Improvement ID', capa.capaId], ['Audit ID', capa.auditId], ['DISHA Question No', capa.dishaQuestionNo],
+    ['Improvement ID', capa.capaId], ['Audit Number', capa.auditId], ['DISHA Question No', capa.dishaQuestionNo],
     ['Area', capa.area], ['Chapter', capa.chapter], ['Classification', capa.classification],
     ['Location / Aspect', capa.locationAspect], ['Guest Experience Impact', capa.guestExperienceImpact], ['Facility Type', capa.facilityType],
     ['Department Owner', capa.departmentOwner], ['Risk Level', capa.riskLevel], ['Evidence Required', capa.evidenceRequired ? 'Yes' : 'No'],

@@ -2,7 +2,7 @@ import { Download, Eye, FileSpreadsheet, FileText, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { StatusBadge } from '../components/UI'
 import { buildTableExportRows, exportRowsToCsv, exportRowsToExcel } from './exportUtils'
-import { paginateRows, sortRows } from './reportUtils'
+import { formatDate, formatDurationDays, paginateRows, sortRows } from './reportUtils'
 
 function statusTone(status) {
   const key = String(status || '').toLowerCase()
@@ -51,6 +51,8 @@ export default function ReportTables({
     onSortChange(key)
   }
 
+  const isLifecycleTab = tabKey === 'lifecycle'
+
   return <section className="card report-table-card">
     <div className="report-table-head">
       <div>
@@ -72,43 +74,89 @@ export default function ReportTables({
     {paging.rows.length ? <div className="report-table-wrap">
       <table className="report-table">
         <thead>
-          <tr>
-            <th onClick={() => handleSort('auditId')}>Audit ID</th>
-            <th onClick={() => handleSort('location')}>Location</th>
-            <th onClick={() => handleSort('department')}>Department</th>
-            <th onClick={() => handleSort('question')}>Question</th>
-            <th onClick={() => handleSort('pic')}>PIC</th>
-            <th onClick={() => handleSort('status')}>Status</th>
-            <th onClick={() => handleSort('dueDate')}>Due Date</th>
-            <th onClick={() => handleSort('ageing')}>Ageing</th>
-            <th>Remarks</th>
-            <th>Action</th>
-          </tr>
+          {isLifecycleTab
+            ? <tr>
+              <th onClick={() => handleSort('auditId')}>Audit Number</th>
+              <th>Audit Name</th>
+              <th onClick={() => handleSort('location')}>Location</th>
+              <th onClick={() => handleSort('department')}>Department</th>
+              <th onClick={() => handleSort('question')}>Question</th>
+              <th onClick={() => handleSort('pic')}>PIC</th>
+              <th>Assigned Date</th>
+              <th>Financial Approval</th>
+              <th>Implementation</th>
+              <th>Closure Date</th>
+              <th>Closure Time</th>
+              <th>Financial Approval Time</th>
+              <th>Implementation Time</th>
+              <th>Verification Time</th>
+              <th onClick={() => handleSort('status')}>Current Status</th>
+              <th>Action</th>
+            </tr>
+            : <tr>
+              <th onClick={() => handleSort('auditId')}>Audit Number</th>
+              <th onClick={() => handleSort('location')}>Location</th>
+              <th onClick={() => handleSort('department')}>Department</th>
+              <th onClick={() => handleSort('question')}>Question</th>
+              <th onClick={() => handleSort('pic')}>PIC</th>
+              <th onClick={() => handleSort('status')}>Status</th>
+              <th onClick={() => handleSort('dueDate')}>Due Date</th>
+              <th onClick={() => handleSort('ageing')}>Ageing</th>
+              <th>Remarks</th>
+              <th>Action</th>
+            </tr>}
         </thead>
         <tbody>
-          {paging.rows.map(row => <tr key={row.id}>
-            <td>
-              <strong>{row.auditId}</strong>
-              <small>{row.auditType}</small>
-            </td>
-            <td>{row.location || '-'}</td>
-            <td>{row.department || '-'}</td>
-            <td>
-              <strong>{row.question || '-'}</strong>
-              <small>{row.result || '-'}</small>
-            </td>
-            <td>
-              <strong>{row.pic || '-'}</strong>
-              <small>{row.picMobile || ''}</small>
-            </td>
-            <td><StatusBadge>{row.status || '-'}</StatusBadge></td>
-            <td>{row.targetDate || '-'}</td>
-            <td><AgeingBadge days={row.ageingDays} /></td>
-            <td>{row.remarks || '-'}</td>
-            <td>
-              <button className="secondary-button" type="button" onClick={() => onViewDetails(row)}><Eye size={14} /> View Details</button>
-            </td>
-          </tr>)}
+          {paging.rows.map(row => isLifecycleTab
+            ? <tr key={row.id}>
+              <td><strong>{row.auditId}</strong></td>
+              <td>{row.auditTitle || '-'}</td>
+              <td>{row.location || '-'}</td>
+              <td>{row.department || '-'}</td>
+              <td>
+                <strong>{row.question || '-'}</strong>
+                <small>{row.result || '-'}</small>
+              </td>
+              <td>
+                <strong>{row.pic || '-'}</strong>
+                <small>{row.picMobile || ''}</small>
+              </td>
+              <td>{formatDate(row.assignedAt)}</td>
+              <td>{row.monetarySupportRequired ? formatDate(row.ceoApprovedAt) : 'Not Applicable'}</td>
+              <td>{formatDate(row.implementationCompletedAt)}</td>
+              <td>{formatDate(row.closureCompletedAt)}</td>
+              <td>{formatDurationDays(row.closureTimeDays)}</td>
+              <td>{row.monetarySupportRequired ? formatDurationDays(row.financialApprovalTimeDays, 'Not Applicable') : 'Not Applicable'}</td>
+              <td>{row.monetarySupportRequired ? formatDurationDays(row.implementationTimeDays, 'Not Applicable') : 'Not Applicable'}</td>
+              <td>{formatDurationDays(row.verificationTimeDays)}</td>
+              <td><StatusBadge>{row.currentStage || row.status || '-'}</StatusBadge></td>
+              <td>
+                <button className="secondary-button" type="button" onClick={() => onViewDetails(row)}><Eye size={14} /> View Details</button>
+              </td>
+            </tr>
+            : <tr key={row.id}>
+              <td>
+                <strong>{row.auditId}</strong>
+                <small>{row.auditType}</small>
+              </td>
+              <td>{row.location || '-'}</td>
+              <td>{row.department || '-'}</td>
+              <td>
+                <strong>{row.question || '-'}</strong>
+                <small>{row.result || '-'}</small>
+              </td>
+              <td>
+                <strong>{row.pic || '-'}</strong>
+                <small>{row.picMobile || ''}</small>
+              </td>
+              <td><StatusBadge>{row.status || '-'}</StatusBadge></td>
+              <td>{row.targetDate || '-'}</td>
+              <td><AgeingBadge days={row.ageingDays} /></td>
+              <td>{row.remarks || '-'}</td>
+              <td>
+                <button className="secondary-button" type="button" onClick={() => onViewDetails(row)}><Eye size={14} /> View Details</button>
+              </td>
+            </tr>)}
         </tbody>
       </table>
     </div> : <div className="report-empty-inline">No matching rows for the selected filters.</div>}

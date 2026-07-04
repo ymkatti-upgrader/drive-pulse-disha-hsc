@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx'
-import { formatCurrency, formatDate, formatPercent } from './reportUtils'
+import { formatCurrency, formatDate, formatDurationDays, formatPercent } from './reportUtils'
 
 function createWorkbook(rows, sheetName = 'Report') {
   const workbook = XLSX.utils.book_new()
@@ -76,11 +76,22 @@ export function exportDashboardSummaryPdf({ title, generatedAt, metrics = [], no
 
 export function buildTableExportRows(rows) {
   return rows.map(row => ({
-    AuditID: row.auditId,
+    AuditNumber: row.auditId,
+    AuditName: row.auditTitle,
     Location: row.location,
     Department: row.department,
     Question: row.question,
     PIC: row.pic,
+    AssignedDate: formatDate(row.assignedAt),
+    FinancialApprovalDate: formatDate(row.ceoApprovedAt),
+    ImplementationDate: formatDate(row.implementationCompletedAt),
+    VerificationDate: formatDate(row.verificationCompletedAt),
+    ClosureDate: formatDate(row.closureCompletedAt),
+    ClosureTime: formatDurationDays(row.closureTimeDays, row.monetarySupportRequired ? '-' : '-'),
+    FinancialApprovalTime: row.monetarySupportRequired ? formatDurationDays(row.financialApprovalTimeDays, 'Not Applicable') : 'Not Applicable',
+    ImplementationTime: row.monetarySupportRequired ? formatDurationDays(row.implementationTimeDays, 'Not Applicable') : 'Not Applicable',
+    VerificationTime: formatDurationDays(row.verificationTimeDays),
+    CurrentStage: row.currentStage || row.status,
     Status: row.status,
     Severity: row.severity,
     DueDate: formatDate(row.targetDate),

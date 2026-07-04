@@ -28,6 +28,14 @@ export function formatCurrency(value, fallback = '-') {
   return `INR ${amount.toLocaleString('en-IN')}`
 }
 
+export function formatDurationDays(value, fallback = '-') {
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return fallback
+  if (amount < 0) return fallback
+  const rounded = Math.round(amount * 10) / 10
+  return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1)} day(s)`
+}
+
 export function formatPercent(value, fallback = '-') {
   const amount = Number(value)
   if (!Number.isFinite(amount)) return fallback
@@ -48,6 +56,38 @@ export function daysBetween(startValue, endValue = new Date()) {
   startDate.setHours(0, 0, 0, 0)
   endDate.setHours(0, 0, 0, 0)
   return Math.max(0, Math.round((endDate.getTime() - startDate.getTime()) / DAY_MS))
+}
+
+function lifecycleMap(rows = []) {
+  const map = new Map()
+  ;(rows || []).forEach(item => {
+    const key = item.response_id || item.id
+    if (key) map.set(key, item)
+  })
+  return map
+}
+
+function numericDuration(value) {
+  const amount = Number(value)
+  return Number.isFinite(amount) ? amount : null
+}
+
+function averageDuration(rows = [], key) {
+  const values = rows.map(row => numericDuration(row[key])).filter(value => value !== null)
+  if (!values.length) return null
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
+}
+
+function monthKey(value) {
+  const date = toDate(value)
+  if (!date) return null
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function monthLabel(key) {
+  const [year, month] = String(key).split('-')
+  const date = new Date(Number(year), Number(month) - 1, 1)
+  return date.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
 }
 
 export function deriveStatus(row = {}) {
@@ -112,11 +152,12 @@ export function normalizeUserMap(users = [], mappings = []) {
   return map
 }
 
-export function buildReportRows({ audits = [], responses = [], findings = [], users = [], locations = [], departments = [], evidence = [] }) {
+export function buildReportRows({ audits = [], responses = [], findings = [], users = [], locations = [], departments = [], evidence = [], lifecycle = [] }) {
   const auditMap = normalizeLookupMap(audits)
   const locationMap = normalizeLookupMap(locations)
   const departmentMap = normalizeLookupMap(departments)
   const userMap = normalizeUserMap(users.users || users, users.mappings || [])
+  const lifecycleByResponse = lifecycleMap(lifecycle)
   const evidenceByFinding = new Map()
   ;(evidence || []).forEach(item => {
     if (!item.finding_id) return
@@ -131,7 +172,8 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
   return (responses || [])
     .filter(row => row && row.is_void !== true)
     .map(row => {
-      const audit = auditMap.get(row.audit_id) || {}
+      const lifecycleRow = lifecycleByResponse.get(row.id) || {}
+      const audit = auditMap.get(row.audit_uuid || row.audit_id) || {}
       const finding = findingByResponse.get(row.id) || {}
       const auditLocation = row.audit_location || locationMap.get(audit.location_id)?.name || locationMap.get(audit.location_id)?.code || ''
       const auditDepartment = row.audit_department || departmentMap.get(audit.department_id)?.name || ''
@@ -160,11 +202,26 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
       const expectedExpenseAmount = toNumber(row.expected_expense_amount)
       const expenseApprovalStatus = row.expense_approval_status || 'Not Required'
       const summary = row.observation || row.comments || row.root_cause || finding.auditor_comments || finding.gap_identified || ''
+      const assignedAt = lifecycleRow.assigned_at || row.assigned_at || createdAt
+      const expenseRequestedAt = lifecycleRow.expense_requested_at || row.expense_requested_at || ''
+      const groupDishaReviewedAt = lifecycleRow.group_disha_reviewed_at || row.group_disha_reviewed_at || row.group_disha_review_date || row.group_disha_approved_at || ''
+      const ceoApprovedAt = lifecycleRow.ceo_approved_at || row.ceo_approved_at || ''
+      const implementationCompletedAt = lifecycleRow.implementation_completed_at || row.implementation_completed_at || row.submitted_for_review_at || ''
+      const verificationCompletedAt = lifecycleRow.verification_completed_at || row.verification_completed_at || row.reviewed_at || ''
+      const closureCompletedAt = lifecycleRow.completed_at || row.completed_at || ''
+      const closureTimeDays = numericDuration(lifecycleRow.closure_time_days) ?? (closureCompletedAt ? daysBetween(lifecycleRow.cycle_started_at || lifecycleRow.latest_reopened_at || assignedAt, closureCompletedAt) : null)
+      const financialApprovalTimeDays = numericDuration(lifecycleRow.financial_approval_time_days) ?? (monetarySupportRequired && ceoApprovedAt ? daysBetween(lifecycleRow.cycle_started_at || lifecycleRow.latest_reopened_at || assignedAt, ceoApprovedAt) : null)
+      const implementationTimeDays = numericDuration(lifecycleRow.implementation_time_days) ?? (monetarySupportRequired && ceoApprovedAt && implementationCompletedAt ? daysBetween(ceoApprovedAt, implementationCompletedAt) : null)
+      const verificationTimeDays = numericDuration(lifecycleRow.verification_time_days) ?? (implementationCompletedAt && closureCompletedAt ? daysBetween(implementationCompletedAt, closureCompletedAt) : null)
+      const actionAgeDays = numericDuration(lifecycleRow.action_age_days) ?? daysBetween(lifecycleRow.cycle_started_at || lifecycleRow.latest_reopened_at || assignedAt, closureCompletedAt || new Date())
+      const ageBucket = lifecycleRow.age_bucket || (actionAgeDays <= 7 ? '0-7 Days' : actionAgeDays <= 15 ? '8-15 Days' : actionAgeDays <= 30 ? '16-30 Days' : '30+ Days')
+      const currentStage = lifecycleRow.current_stage || (closureCompletedAt ? 'Closed' : implementationCompletedAt ? 'Verification Pending' : monetarySupportRequired && !ceoApprovedAt ? 'Financial Approval Pending' : 'Implementation Pending')
 
       return {
         id: row.id,
-        auditId: audit.audit_no || row.audit_id,
-        auditNo: audit.audit_no || '',
+        auditId: audit.audit_number || audit.audit_no || row.audit_id,
+        auditUuid: row.audit_uuid || audit.id || '',
+        auditNo: audit.audit_number || audit.audit_no || '',
         auditTitle: audit.title || '',
         auditType: deriveAuditType(audit, row),
         auditStatus: audit.status || '',
@@ -195,6 +252,7 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
         expenseApprovalStatus,
         expenseApproverRole: row.expense_approver_role || '',
         targetDate,
+        dueDate: lifecycleRow.due_date || row.tentative_closing_date || '',
         actualClosureDate,
         createdAt,
         updatedAt: row.updated_at || finding.updated_at || audit.updated_at,
@@ -209,6 +267,22 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
         findingStatus: finding.status || '',
         findingRisk: finding.risk_level || '',
         findingTargetDate: finding.target_date || '',
+        assignedAt,
+        expenseRequestedAt,
+        groupDishaReviewedAt,
+        ceoApprovedAt,
+        implementationCompletedAt,
+        verificationCompletedAt,
+        closureCompletedAt,
+        closureTimeDays,
+        financialApprovalTimeDays,
+        implementationTimeDays,
+        verificationTimeDays,
+        actionAgeDays,
+        ageBucket,
+        currentStage,
+        latestReopenedAt: lifecycleRow.latest_reopened_at || row.latest_reopened_at || '',
+        reopenCount: Number(lifecycleRow.reopen_count) || 0,
       }
     })
     .filter(row => row.auditId)
@@ -257,6 +331,7 @@ export function filterRows(rows, filters = {}) {
         row.rootCauseCategory,
         row.status,
         row.severity,
+        row.currentStage,
       ].map(value => normalizedText(value)).join(' | ')
       if (!haystack.includes(search)) return false
     }
@@ -273,9 +348,13 @@ export function sortRows(rows, sortKey, sortDirection = 'desc') {
       case 'department': return row.department
       case 'question': return row.question
       case 'pic': return row.pic
-      case 'status': return row.status
-      case 'dueDate': return row.targetDate
+      case 'status': return row.currentStage || row.status
+      case 'dueDate': return row.dueDate || row.targetDate
       case 'ageing': return row.ageingDays
+      case 'closureTimeDays': return row.closureTimeDays
+      case 'financialApprovalTimeDays': return row.financialApprovalTimeDays
+      case 'implementationTimeDays': return row.implementationTimeDays
+      case 'verificationTimeDays': return row.verificationTimeDays
       case 'remarks': return row.remarks
       default: return row.createdAt
     }
@@ -305,8 +384,8 @@ export function paginateRows(rows, page = 1, pageSize = 10) {
 export function buildSummary(rows = []) {
   const nonVoid = rows.filter(row => row)
   const ngRows = nonVoid.filter(row => normalizedText(row.result) === 'ng')
-  const openCapas = ngRows.filter(row => !['closed', 'approved'].includes(normalizedText(row.closureStatus)) && !row.actualClosureDate)
-  const closedCapas = ngRows.filter(row => ['closed', 'approved'].includes(normalizedText(row.closureStatus)) || row.actualClosureDate)
+  const openCapas = ngRows.filter(row => !['closed', 'approved'].includes(normalizedText(row.closureStatus)) && !row.closureCompletedAt && !row.actualClosureDate)
+  const closedCapas = ngRows.filter(row => ['closed', 'approved'].includes(normalizedText(row.closureStatus)) || row.closureCompletedAt || row.actualClosureDate)
   const overdueCapas = openCapas.filter(row => row.overdue)
   const pendingVerification = ngRows.filter(row => normalizedText(row.verificationStatus).includes('pending'))
   const pendingCeoApproval = nonVoid.filter(row => row.monetarySupportRequired && normalizedText(row.expenseApprovalStatus) === 'pending ceo approval')
@@ -316,7 +395,11 @@ export function buildSummary(rows = []) {
     .filter(row => normalizedText(row.expenseApprovalStatus) === 'approved')
     .reduce((sum, row) => sum + toNumber(row.expectedExpenseAmount), 0)
   const averageClosureDays = closedCapas.length
-    ? Math.round(closedCapas.reduce((sum, row) => sum + Math.max(0, Number(row.ageingDays) || 0), 0) / closedCapas.length)
+    ? Math.round(closedCapas.reduce((sum, row) => {
+      const duration = numericDuration(row.closureTimeDays)
+      const fallback = Number(row.ageingDays)
+      return sum + Math.max(0, duration ?? (Number.isFinite(fallback) ? fallback : 0))
+    }, 0) / closedCapas.length)
     : 0
   const repeatMap = new Map()
   nonVoid.forEach(row => {
@@ -340,6 +423,28 @@ export function buildSummary(rows = []) {
     pendingCeoApproval: pendingCeoApproval.length,
     totalMonetaryValueRequested: totalRequested,
     totalMonetaryValueApproved: totalApproved,
+  }
+}
+
+export function buildLifecycleSummary(rows = []) {
+  const ngRows = rows.filter(row => normalizedText(row.result) === 'ng')
+  const openRows = ngRows.filter(row => !row.closureCompletedAt && normalizedText(row.closureStatus) !== 'closed')
+  const currentMonth = new Date()
+  const actionsClosedThisMonth = ngRows.filter(row => {
+    const closedAt = toDate(row.closureCompletedAt)
+    return closedAt && closedAt.getMonth() === currentMonth.getMonth() && closedAt.getFullYear() === currentMonth.getFullYear()
+  }).length
+  const longestPendingAction = openRows.reduce((max, row) => Math.max(max, Number(row.actionAgeDays) || 0), 0)
+  const oldestOpenNg = openRows.reduce((max, row) => Math.max(max, Number(row.actionAgeDays) || 0), 0)
+
+  return {
+    averageClosureTime: averageDuration(ngRows.filter(row => row.closureCompletedAt), 'closureTimeDays'),
+    averageFinancialApprovalTime: averageDuration(ngRows.filter(row => row.monetarySupportRequired && row.ceoApprovedAt), 'financialApprovalTimeDays'),
+    averageImplementationTime: averageDuration(ngRows.filter(row => row.implementationCompletedAt), 'implementationTimeDays'),
+    averageVerificationTime: averageDuration(ngRows.filter(row => row.closureCompletedAt), 'verificationTimeDays'),
+    longestPendingAction,
+    oldestOpenNg,
+    actionsClosedThisMonth,
   }
 }
 
@@ -479,5 +584,54 @@ export function buildDashboardSnapshot({ audits = [], rows = [] }) {
     monetaryByCategory,
     auditCompletion,
     picPendingActions,
+  }
+}
+
+function buildAverageSeries(rows = [], labelKey, metricKey) {
+  const grouped = groupBy(rows.filter(row => numericDuration(row[metricKey]) !== null), row => row[labelKey] || 'Unassigned')
+  return grouped
+    .map(group => ({
+      label: group.label,
+      value: Math.round((group.rows.reduce((sum, row) => sum + Number(row[metricKey]), 0) / group.rows.length) * 10) / 10,
+      count: group.rows.length,
+    }))
+    .sort((a, b) => b.value - a.value)
+}
+
+function buildDurationTrend(rows = [], dateField, metricKey) {
+  const groups = new Map()
+  rows.forEach(row => {
+    const key = monthKey(row[dateField])
+    const metric = numericDuration(row[metricKey])
+    if (!key || metric === null) return
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(metric)
+  })
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, values]) => ({
+      label: monthLabel(key),
+      value: Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10,
+      count: values.length,
+    }))
+}
+
+function buildActionAgeing(rows = []) {
+  const labels = ['0-7 Days', '8-15 Days', '16-30 Days', '30+ Days']
+  return labels.map(label => ({
+    label,
+    value: rows.filter(row => !row.closureCompletedAt && row.ageBucket === label).length,
+  })).filter(item => item.value > 0)
+}
+
+export function buildLifecycleSnapshot(rows = []) {
+  const ngRows = rows.filter(row => normalizedText(row.result) === 'ng')
+  return {
+    closureTimeByDepartment: buildAverageSeries(ngRows.filter(row => row.closureCompletedAt), 'department', 'closureTimeDays'),
+    closureTimeByLocation: buildAverageSeries(ngRows.filter(row => row.closureCompletedAt), 'location', 'closureTimeDays'),
+    financialApprovalTrend: buildDurationTrend(ngRows.filter(row => row.monetarySupportRequired && row.ceoApprovedAt), 'ceoApprovedAt', 'financialApprovalTimeDays'),
+    implementationTimeByPic: buildAverageSeries(ngRows.filter(row => row.implementationTimeDays !== null && row.implementationTimeDays !== undefined), 'pic', 'implementationTimeDays'),
+    verificationTimeTrend: buildDurationTrend(ngRows.filter(row => row.closureCompletedAt), 'closureCompletedAt', 'verificationTimeDays'),
+    actionAgeing: buildActionAgeing(ngRows),
   }
 }
