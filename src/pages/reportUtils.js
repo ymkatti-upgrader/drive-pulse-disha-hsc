@@ -141,7 +141,7 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
         || userMap.get(row.pic_for_ng_user_id)?.employee_name
         || ''
       const picMobile = row.pic_for_ng_mobile || userMap.get(row.assigned_pic_user_id)?.mobile_no || userMap.get(row.pic_for_ng_user_id)?.mobile_no || ''
-      const rootCause = row.root_cause_summary || row.root_cause || finding.root_cause || ''
+      const rootCause = row.root_cause || finding.root_cause || ''
       const causeCategory = row.cause_category || 'Unclassified'
       const status = deriveStatus(row)
       const severity = deriveSeverity(row, finding)
@@ -155,7 +155,7 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
       const monetarySupportRequired = Boolean(row.monetary_support_required)
       const expectedExpenseAmount = toNumber(row.expected_expense_amount)
       const expenseApprovalStatus = row.expense_approval_status || 'Not Required'
-      const summary = row.observation || row.comments || row.root_cause_summary || finding.auditor_comments || finding.gap_identified || ''
+      const summary = row.observation || row.comments || row.root_cause || finding.auditor_comments || finding.gap_identified || ''
 
       return {
         id: row.id,

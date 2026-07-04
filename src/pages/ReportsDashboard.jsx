@@ -1,4 +1,4 @@
-import { Download, FileDown, RefreshCcw, ShieldAlert, Sparkles } from 'lucide-react'
+import { Download, FileDown, RefreshCcw, ShieldAlert } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { canAccessScope, canManageDishaWorkflow, canViewReports, getPrimaryRole, useAuth } from '../auth/AuthContext'
 import { PageHeader, StatusBadge } from '../components/UI'
@@ -170,7 +170,7 @@ export default function ReportsDashboard() {
     setError('')
     try {
       const client = requireSupabase()
-      let responseQuery = client.from('audit_responses').select('id, audit_id, checklist_id, result, sub_question_text, audit_location, audit_department, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, closure_status, verification_status, root_cause_summary, cause_category, monetary_support_required, expected_expense_amount, expense_category, expense_purpose, expense_approval_status, expense_approver_role, quotation_files, is_void, target_date, expected_closure_date, actual_closure_date, updated_at, created_at, observation, comments, root_cause').order('created_at', { ascending: false })
+      let responseQuery = client.from('audit_responses').select('id, audit_id, checklist_id, result, sub_question_text, audit_location, audit_department, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, closure_status, verification_status, cause_category, monetary_support_required, expected_expense_amount, expense_category, expense_purpose, expense_approval_status, expense_approver_role, quotation_files, is_void, target_date, expected_closure_date, actual_closure_date, updated_at, created_at, observation, comments, root_cause').order('created_at', { ascending: false })
       let auditQuery = client.from('audits').select('id, audit_no, title, location_id, department_id, auditor_id, status, score, scheduled_date, started_at, submitted_at, completed_at, created_at, updated_at')
       let findingQuery = client.from('audit_findings').select('id, audit_response_id, audit_id, checklist_id, location_id, owner_department_id, location_functional_hod_id, current_condition, gap_identified, auditor_comments, risk_level, status, target_date, closed_at, created_at, updated_at')
       let evidenceQuery = client.from('finding_evidence').select('id, finding_id, file_name, mime_type, file_size_bytes, storage_path, uploaded_at, evidence_stage, is_deleted').eq('is_deleted', false)
