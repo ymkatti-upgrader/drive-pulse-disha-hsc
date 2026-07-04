@@ -100,6 +100,7 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const roleProfile = getRoleProfile(user)
+  const roleLabel = roleProfile.label
   const { audits } = useAudits()
   const { capas } = useCapas()
   const { stories } = useYokoten()
