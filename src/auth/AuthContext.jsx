@@ -210,16 +210,165 @@ export function canAccessSuperAdminControls(user) {
 }
 
 export function canAccessAuditModule(user) {
-  return getUserAccess(user).some(item => {
-    const role = normalizeAuditRole(item.role)
-    const userType = normalizeAuditRole(item.user_type)
-    return ['super admin', 'system administrator', 'group disha hsc pic', 'branch disha hsc pic', 'auditor'].includes(role)
-      || ['super admin', 'system admin', 'system administrator', 'group disha hsc pic', 'branch disha hsc pic', 'auditor'].includes(userType)
-  })
+  return canAccessFeature(user, 'audit-workbench') || canAccessFeature(user, 'conduct-audit')
 }
 
 export function canViewAuditModule(user) {
-  return canAccessAuditModule(user) || isGroupDishaHsc(user)
+  return canAccessFeature(user, 'audit-workbench') || canAccessFeature(user, 'conduct-audit')
+}
+
+export function isCeo(user) {
+  return matchesUserAccess(user, ['ceo'])
+}
+
+export function isGroupFunctionalHod(user) {
+  return matchesUserAccess(user, ['group functional hod', 'group functional pic'])
+}
+
+export function isBranchDishaAuditor(user) {
+  return matchesUserAccess(user, ['branch disha hsc pic', 'branch disha pic', 'auditor'])
+}
+
+export function isLocationFunctionalHod(user) {
+  return matchesUserAccess(user, ['location functional hod', 'ng pic'])
+}
+
+export function isViewer(user) {
+  return matchesUserAccess(user, ['viewer'])
+}
+
+export function getAccessScopeValues(user, key) {
+  return [...new Set(
+    getUserAccess(user)
+      .flatMap(item => splitScopeValues(item?.[key]))
+      .map(value => String(value || '').trim())
+      .filter(Boolean),
+  )]
+}
+
+const ROLE_PROFILES = {
+  'system-admin': {
+    id: 'system-admin',
+    label: 'System Administrator',
+    dashboardName: 'Administration Dashboard',
+    dashboardTone: 'admin',
+    dashboardEyebrow: 'SYSTEM CONTROL',
+    description: 'Application administration, masters, user access, audit setup, and platform governance.',
+    navigation: [
+      { feature: 'dashboard', label: 'Dashboard', description: 'Administrative home' },
+      { feature: 'audit-workbench', label: 'Audit Control', description: 'Create and assign audits' },
+      { feature: 'masters', label: 'Masters', description: 'Users, roles, locations, checklist' },
+      { feature: 'reports', label: 'Reports', description: 'Cross-functional analytics' },
+    ],
+    features: ['dashboard', 'audit-workbench', 'masters', 'reports', 'super-admin'],
+  },
+  ceo: {
+    id: 'ceo',
+    label: 'CEO',
+    dashboardName: 'Executive Dashboard',
+    dashboardTone: 'executive',
+    dashboardEyebrow: 'STRATEGIC OVERSIGHT',
+    description: 'Executive KPIs, financial approvals, repeat findings, and cross-location performance.',
+    navigation: [
+      { feature: 'dashboard', label: 'Dashboard', description: 'Executive overview' },
+      { feature: 'financial-approvals', label: 'Financial Approvals', description: 'CEO approval queue' },
+      { feature: 'reports', label: 'Reports', description: 'Enterprise analytics' },
+      { feature: 'management-review', label: 'Audit Details', description: 'Read-only strategic review' },
+    ],
+    features: ['dashboard', 'action-center', 'reports', 'management-review'],
+  },
+  'group-disha': {
+    id: 'group-disha',
+    label: 'Group DISHA HSC PIC',
+    dashboardName: 'Governance Dashboard',
+    dashboardTone: 'governance',
+    dashboardEyebrow: 'AUDIT GOVERNANCE',
+    description: 'Review queues, financial technical scrutiny, verification flow, and multi-location monitoring.',
+    navigation: [
+      { feature: 'dashboard', label: 'Dashboard', description: 'Governance overview' },
+      { feature: 'management-review', label: 'Audit Monitoring', description: 'Audit and CAPA governance' },
+      { feature: 'review-queue', label: 'Review Queue', description: 'CAPA and closure reviews' },
+      { feature: 'financial-review', label: 'Financial Review Queue', description: 'Technical recommendation stage' },
+      { feature: 'verification', label: 'Verification Queue', description: 'Evidence review queue' },
+      { feature: 'reports', label: 'Reports', description: 'Governance analytics' },
+    ],
+    features: ['dashboard', 'action-center', 'verification', 'management-review', 'reports', 'yokoten'],
+  },
+  'group-functional-hod': {
+    id: 'group-functional-hod',
+    label: 'Group Functional PIC / HOD',
+    dashboardName: 'Department Governance Dashboard',
+    dashboardTone: 'department',
+    dashboardEyebrow: 'DEPARTMENT GOVERNANCE',
+    description: 'Department analytics, pending reviews, and cross-location action performance for your function.',
+    navigation: [
+      { feature: 'dashboard', label: 'Dashboard', description: 'Department home' },
+      { feature: 'action-center', label: 'My Department Work', description: 'Department NG, CAPA, and reviews' },
+      { feature: 'reports', label: 'Reports', description: 'Department reports' },
+    ],
+    features: ['dashboard', 'action-center', 'reports'],
+  },
+  'branch-auditor': {
+    id: 'branch-auditor',
+    label: 'Branch DISHA PIC',
+    dashboardName: 'Audit Dashboard',
+    dashboardTone: 'audit',
+    dashboardEyebrow: 'AUDIT EXECUTION',
+    description: 'Assigned audits, findings capture, verification, and audit history for your scope.',
+    navigation: [
+      { feature: 'dashboard', label: 'Dashboard', description: 'Audit home' },
+      { feature: 'audit-workbench', label: 'My Audits', description: 'Assigned and draft audits' },
+      { feature: 'conduct-audit', label: 'Conduct Audit', description: 'Execution workbench' },
+      { feature: 'verification', label: 'Verification', description: 'Closure verification' },
+      { feature: 'reports', label: 'Audit History', description: 'Read-only audit history' },
+    ],
+    features: ['dashboard', 'audit-workbench', 'conduct-audit', 'verification', 'reports', 'yokoten'],
+  },
+  'location-functional-hod': {
+    id: 'location-functional-hod',
+    label: 'Location Functional HOD',
+    dashboardName: 'Action Dashboard',
+    dashboardTone: 'action',
+    dashboardEyebrow: 'ACTION OWNERSHIP',
+    description: 'Assigned actions, CAPA progress, collaboration, financial requests, and resubmissions.',
+    navigation: [
+      { feature: 'dashboard', label: 'Dashboard', description: 'Action owner home' },
+      { feature: 'action-center', label: 'My Work', description: 'Assigned CAPA and collaboration' },
+      { feature: 'reports', label: 'History', description: 'Read-only action history' },
+    ],
+    features: ['dashboard', 'action-center', 'reports'],
+  },
+  viewer: {
+    id: 'viewer',
+    label: 'Viewer',
+    dashboardName: 'Reporting Dashboard',
+    dashboardTone: 'viewer',
+    dashboardEyebrow: 'READ ONLY',
+    description: 'Read-only dashboards, reports, and audit history without workflow actions.',
+    navigation: [
+      { feature: 'dashboard', label: 'Dashboard', description: 'Reporting home' },
+      { feature: 'reports', label: 'Reports', description: 'Read-only analytics' },
+    ],
+    features: ['dashboard', 'reports'],
+  },
+}
+
+function resolveRoleProfileId(user) {
+  if (isSystemAdmin(user) || hasAdminAccess(user)) return 'system-admin'
+  if (isCeo(user)) return 'ceo'
+  if (isGroupDishaHsc(user)) return 'group-disha'
+  if (isGroupFunctionalHod(user)) return 'group-functional-hod'
+  if (isBranchDishaAuditor(user)) return 'branch-auditor'
+  if (isLocationFunctionalHod(user)) return 'location-functional-hod'
+  return 'viewer'
+}
+
+export function getRoleProfile(user) {
+  return ROLE_PROFILES[resolveRoleProfileId(user)] || ROLE_PROFILES.viewer
+}
+
+export function canAccessFeature(user, feature) {
+  return getRoleProfile(user).features.includes(feature)
 }
 
 function splitScopeValues(value) {

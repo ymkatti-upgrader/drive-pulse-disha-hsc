@@ -48,46 +48,26 @@ function DonutList({ data, onSelect }) {
   </div>
 }
 
-export default function ReportCharts({ snapshot, onSelectGroup }) {
+const chartConfig = [
+  { key: 'complianceTrend', title: 'TREND', subtitle: 'Compliance trend by month', icon: TrendingUp, dataKey: 'complianceTrend', formatter: value => `${value}%`, focus: 'Compliance trend' },
+  { key: 'locationComparison', title: 'LOCATION', subtitle: 'Location-wise compliance comparison', icon: BarChart3, dataKey: 'locationComparison', formatter: value => `${value} audit(s)`, focus: 'Location comparison' },
+  { key: 'departmentNg', title: 'DEPARTMENT', subtitle: 'Department-wise NG count', icon: BarChart3, dataKey: 'departmentNg', formatter: value => `${value} NG`, focus: 'Department NG count' },
+  { key: 'capaStatus', title: 'CAPA STATUS', subtitle: 'CAPA status donut chart', icon: PieChart, dataKey: 'capaStatus', donut: true, focus: 'CAPA status' },
+  { key: 'rootCausePareto', title: 'ROOT CAUSE', subtitle: 'Root cause Pareto chart', icon: BarChart3, dataKey: 'rootCausePareto', formatter: (value, item) => `${value} NG | ${item.cumulativePercent}% cum.`, focus: 'Root cause' },
+  { key: 'overdueAgeing', title: 'AGEING', subtitle: 'Overdue CAPA ageing chart', icon: BarChart3, dataKey: 'overdueAgeing', formatter: value => `${value} overdue`, focus: 'Overdue ageing' },
+  { key: 'repeatFindings', title: 'REPEAT FINDINGS', subtitle: 'Repeat findings by DQ / question', icon: BarChart3, dataKey: 'repeatFindings', formatter: value => `${value} repeat(s)`, focus: 'Repeat findings' },
+  { key: 'monetaryByCategory', title: 'MONETARY', subtitle: 'Monetary requests by category', icon: BarChart3, dataKey: 'monetaryByCategory', formatter: value => `${value} request(s)`, focus: 'Monetary category' },
+  { key: 'auditCompletion', title: 'AUDIT COMPLETION', subtitle: 'Audit completion trend', icon: TrendingUp, dataKey: 'auditCompletion', formatter: value => `${value}%`, focus: 'Audit completion trend' },
+  { key: 'picPendingActions', title: 'PIC ACTIONS', subtitle: 'PIC-wise pending actions', icon: BarChart3, dataKey: 'picPendingActions', formatter: value => `${value} pending`, focus: 'PIC pending actions' },
+]
+
+export default function ReportCharts({ snapshot, onSelectGroup, visibleKeys }) {
+  const visibleCharts = visibleKeys?.length ? chartConfig.filter(item => visibleKeys.includes(item.key)) : chartConfig
   return <section className="report-chart-grid">
-    <ChartCard title="TREND" subtitle="Compliance trend by month" icon={TrendingUp}>
-      <BarList data={snapshot.complianceTrend} onSelect={item => onSelectGroup('Compliance trend', item.label)} valueFormatter={value => `${value}%`} />
-    </ChartCard>
-
-    <ChartCard title="LOCATION" subtitle="Location-wise compliance comparison" icon={BarChart3}>
-      <BarList data={snapshot.locationComparison} onSelect={item => onSelectGroup('Location comparison', item.label)} valueFormatter={value => `${value} audit(s)`} />
-    </ChartCard>
-
-    <ChartCard title="DEPARTMENT" subtitle="Department-wise NG count" icon={BarChart3}>
-      <BarList data={snapshot.departmentNg} onSelect={item => onSelectGroup('Department NG count', item.label)} valueFormatter={value => `${value} NG`} />
-    </ChartCard>
-
-    <ChartCard title="CAPA STATUS" subtitle="CAPA status donut chart" icon={PieChart}>
-      <DonutList data={snapshot.capaStatus} onSelect={item => onSelectGroup('CAPA status', item.label)} />
-    </ChartCard>
-
-    <ChartCard title="ROOT CAUSE" subtitle="Root cause Pareto chart" icon={BarChart3}>
-      <BarList data={snapshot.rootCausePareto} onSelect={item => onSelectGroup('Root cause', item.label)} valueFormatter={(value, item) => `${value} NG | ${item.cumulativePercent}% cum.`} />
-    </ChartCard>
-
-    <ChartCard title="AGEING" subtitle="Overdue CAPA ageing chart" icon={BarChart3}>
-      <BarList data={snapshot.overdueAgeing} onSelect={item => onSelectGroup('Overdue ageing', item.label)} valueFormatter={value => `${value} overdue`} />
-    </ChartCard>
-
-    <ChartCard title="REPEAT FINDINGS" subtitle="Repeat findings by DQ / question" icon={BarChart3}>
-      <BarList data={snapshot.repeatFindings} onSelect={item => onSelectGroup('Repeat findings', item.label)} valueFormatter={value => `${value} repeat(s)`} />
-    </ChartCard>
-
-    <ChartCard title="MONETARY" subtitle="Monetary requests by category" icon={BarChart3}>
-      <BarList data={snapshot.monetaryByCategory} onSelect={item => onSelectGroup('Monetary category', item.label)} valueFormatter={value => `${value} request(s)`} />
-    </ChartCard>
-
-    <ChartCard title="AUDIT COMPLETION" subtitle="Audit completion trend" icon={TrendingUp}>
-      <BarList data={snapshot.auditCompletion} onSelect={item => onSelectGroup('Audit completion trend', item.label)} valueFormatter={value => `${value}%`} />
-    </ChartCard>
-
-    <ChartCard title="PIC ACTIONS" subtitle="PIC-wise pending actions" icon={BarChart3}>
-      <BarList data={snapshot.picPendingActions} onSelect={item => onSelectGroup('PIC pending actions', item.label)} valueFormatter={value => `${value} pending`} />
-    </ChartCard>
+    {visibleCharts.map(item => <ChartCard key={item.key} title={item.title} subtitle={item.subtitle} icon={item.icon}>
+      {item.donut
+        ? <DonutList data={snapshot[item.dataKey]} onSelect={entry => onSelectGroup(item.focus, entry.label)} />
+        : <BarList data={snapshot[item.dataKey]} onSelect={entry => onSelectGroup(item.focus, entry.label)} valueFormatter={item.formatter} />}
+    </ChartCard>)}
   </section>
 }

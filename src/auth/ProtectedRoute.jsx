@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { canViewAuditModule, useAuth } from './AuthContext'
+import { canAccessFeature, canViewAuditModule, useAuth } from './AuthContext'
 
 export default function ProtectedRoute() {
   const { isAuthenticated, user } = useAuth()
@@ -25,4 +25,12 @@ export function AuditRouteGuard() {
 
   if (!canViewAuditModule(user)) return <Navigate to="/dashboard" replace state={{ from: location.pathname }} />
   return <Outlet />
+}
+
+export function FeatureRouteGuard({ feature, children }) {
+  const { user } = useAuth()
+  const location = useLocation()
+
+  if (!canAccessFeature(user, feature)) return <Navigate to="/dashboard" replace state={{ from: location.pathname }} />
+  return children
 }

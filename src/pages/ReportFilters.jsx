@@ -1,10 +1,10 @@
 import { CalendarDays, ChevronDown, RefreshCcw, Search } from 'lucide-react'
 
-function SelectField({ label, value, onChange, options }) {
+function SelectField({ label, value, onChange, options, disabled = false }) {
   return <label className="report-filter-field">
     <span>{label}</span>
     <div className="report-select">
-      <select value={value} onChange={onChange}>
+      <select value={value} onChange={onChange} disabled={disabled}>
         {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
       <ChevronDown size={16} />
@@ -12,8 +12,10 @@ function SelectField({ label, value, onChange, options }) {
   </label>
 }
 
-export default function ReportFilters({ value, options, onChange, onRefresh, loading, lastRefreshed }) {
+export default function ReportFilters({ value, options, onChange, onRefresh, loading, lastRefreshed, visibleFields, lockedFields = [] }) {
   const handleChange = key => event => onChange(current => ({ ...current, [key]: event.target.value }))
+  const show = key => !visibleFields || visibleFields.includes(key)
+  const isLocked = key => lockedFields.includes(key)
 
   return <section className="card report-filters">
     <div className="report-filters-head">
@@ -29,7 +31,7 @@ export default function ReportFilters({ value, options, onChange, onRefresh, loa
     </div>
 
     <div className="report-filter-grid">
-      <label className="report-filter-field">
+      {show('startDate') && show('endDate') && <label className="report-filter-field">
         <span>Date range</span>
         <div className="report-date-grid">
           <div className="report-date-input">
@@ -41,23 +43,23 @@ export default function ReportFilters({ value, options, onChange, onRefresh, loa
             <input type="date" value={value.endDate} onChange={handleChange('endDate')} />
           </div>
         </div>
-      </label>
-      <SelectField label="Location" value={value.location} onChange={handleChange('location')} options={options.locations} />
-      <SelectField label="Department" value={value.department} onChange={handleChange('department')} options={options.departments} />
-      <SelectField label="Audit type" value={value.auditType} onChange={handleChange('auditType')} options={options.auditTypes} />
-      <SelectField label="Auditor" value={value.auditor} onChange={handleChange('auditor')} options={options.auditors} />
-      <SelectField label="PIC" value={value.pic} onChange={handleChange('pic')} options={options.pics} />
-      <SelectField label="Status" value={value.status} onChange={handleChange('status')} options={options.statuses} />
-      <SelectField label="Severity" value={value.severity} onChange={handleChange('severity')} options={options.severities} />
-      <SelectField label="Root cause category" value={value.rootCauseCategory} onChange={handleChange('rootCauseCategory')} options={options.rootCauseCategories} />
-      <SelectField label="Monetary support required" value={value.monetarySupportRequired} onChange={handleChange('monetarySupportRequired')} options={options.yesNo} />
-      <label className="report-filter-field report-search-field">
+      </label>}
+      {show('location') && <SelectField label="Location" value={value.location} onChange={handleChange('location')} options={options.locations} disabled={isLocked('location')} />}
+      {show('department') && <SelectField label="Department" value={value.department} onChange={handleChange('department')} options={options.departments} disabled={isLocked('department')} />}
+      {show('auditType') && <SelectField label="Audit type" value={value.auditType} onChange={handleChange('auditType')} options={options.auditTypes} disabled={isLocked('auditType')} />}
+      {show('auditor') && <SelectField label="Auditor" value={value.auditor} onChange={handleChange('auditor')} options={options.auditors} disabled={isLocked('auditor')} />}
+      {show('pic') && <SelectField label="PIC" value={value.pic} onChange={handleChange('pic')} options={options.pics} disabled={isLocked('pic')} />}
+      {show('status') && <SelectField label="Status" value={value.status} onChange={handleChange('status')} options={options.statuses} disabled={isLocked('status')} />}
+      {show('severity') && <SelectField label="Severity" value={value.severity} onChange={handleChange('severity')} options={options.severities} disabled={isLocked('severity')} />}
+      {show('rootCauseCategory') && <SelectField label="Root cause category" value={value.rootCauseCategory} onChange={handleChange('rootCauseCategory')} options={options.rootCauseCategories} disabled={isLocked('rootCauseCategory')} />}
+      {show('monetarySupportRequired') && <SelectField label="Monetary support required" value={value.monetarySupportRequired} onChange={handleChange('monetarySupportRequired')} options={options.yesNo} disabled={isLocked('monetarySupportRequired')} />}
+      {show('search') && <label className="report-filter-field report-search-field">
         <span>Quick search</span>
         <div className="report-search">
           <Search size={16} />
           <input value={value.search} onChange={handleChange('search')} placeholder="Search audit, question, PIC, remarks" />
         </div>
-      </label>
+      </label>}
     </div>
   </section>
 }

@@ -145,12 +145,16 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
       const causeCategory = row.cause_category || 'Unclassified'
       const status = deriveStatus(row)
       const severity = deriveSeverity(row, finding)
-      const targetDate = finding.target_date || row.target_date || row.expected_closure_date || ''
+      const targetDate = row.tentative_closing_date || row.actual_closure_date || row.updated_at || ''
       const actualClosureDate = finding.closed_at || row.actual_closure_date || ''
       const createdAt = row.created_at || finding.created_at || audit.created_at
       const closedAt = actualClosureDate || finding.closed_at || row.actual_closure_date
       const ageDays = daysBetween(targetDate || createdAt, closedAt || new Date())
-      const overdue = Boolean(targetDate && !closedAt && daysBetween(targetDate, new Date()) > 0)
+      const overdue = Boolean(
+        row.tentative_closing_date
+        && normalizedText(row.closure_status) !== 'closed'
+        && daysBetween(row.tentative_closing_date, new Date()) > 0
+      )
       const evidenceCount = evidenceByFinding.get(finding.id)?.length || 0
       const monetarySupportRequired = Boolean(row.monetary_support_required)
       const expectedExpenseAmount = toNumber(row.expected_expense_amount)

@@ -1,11 +1,12 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowRight, BarChart3, Bell, BookOpenCheck, ClipboardCheck, FileBarChart, LayoutDashboard, LogOut, Menu, MoreHorizontal, Settings2, ShieldCheck, Target, X } from 'lucide-react'
 import { useState } from 'react'
-import { canAccessSuperAdminControls, canManageDishaWorkflow, canViewReports, getPrimaryRole, useAuth } from '../auth/AuthContext'
+import { canAccessFeature, getPrimaryRole, getRoleProfile, useAuth } from '../auth/AuthContext'
 import { useNotifications } from '../notifications/NotificationContext'
 
 const roleLabels = {
   CEO: 'CEO',
+  'Group Functional PIC': 'Group Functional PIC',
   'Group Functional HOD': 'Group Functional HOD',
   'Group DISHA HSC PIC': 'Group DISHA HSC PIC',
   'Branch DISHA PIC': 'Branch DISHA PIC',
@@ -18,18 +19,30 @@ const roleLabels = {
   'Super Admin': 'Super Admin',
 }
 
-const leadershipRoles = ['CEO', 'Group Functional HOD', 'Group DISHA HSC PIC', 'Branch DISHA PIC', 'Location Functional HOD']
-const desktopNav = [
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/management-review', label: 'Review Center', icon: FileBarChart },
-  { to: '/reports', label: 'Reports / Analytics', icon: BarChart3 },
-  { to: '/audits/new', label: 'Audit', icon: ClipboardCheck },
-  { to: '/action-center', label: 'Disha Action Hub', icon: Target },
-  { to: '/yokoten', label: 'Yokoten Library', icon: BookOpenCheck },
-  { to: '/masters', label: 'Masters', icon: Settings2 },
-]
+const navCatalog = {
+  dashboard: { to: '/dashboard', icon: LayoutDashboard },
+  reports: { to: '/reports', icon: BarChart3 },
+  'management-review': { to: '/management-review', icon: FileBarChart },
+  'audit-workbench': { to: '/audits/new', icon: ClipboardCheck },
+  'conduct-audit': { to: '/audits/new', icon: ClipboardCheck },
+  'action-center': { to: '/action-center', icon: Target },
+  'review-queue': { to: '/action-center', icon: Target },
+  'financial-review': { to: '/action-center', icon: ShieldCheck },
+  'financial-approvals': { to: '/action-center', icon: ShieldCheck },
+  verification: { to: '/verification', icon: ShieldCheck },
+  yokoten: { to: '/yokoten', icon: BookOpenCheck },
+  masters: { to: '/masters', icon: Settings2 },
+}
 
-const mobileNav = desktopNav.filter(item => ['/dashboard', '/audits/new', '/action-center'].includes(item.to))
+function dedupeNavigation(items) {
+  const seen = new Set()
+  return items.filter(item => {
+    const key = `${item.to}|${item.label}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
 
 export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -39,18 +52,17 @@ export default function AppShell() {
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
   const navigate = useNavigate()
   const location = useLocation()
+  const roleProfile = getRoleProfile(user)
   const roleLabel = roleLabels[getPrimaryRole(user)] || getPrimaryRole(user)
   const mobileNo = user?.mobile_no || user?.mobile || ''
-  const showLeadershipReview = canManageDishaWorkflow(user) || leadershipRoles.includes(getPrimaryRole(user))
-  const showReports = canViewReports(user)
-  const showMasters = canAccessSuperAdminControls(user)
-  const sidebarNav = desktopNav.filter(item => {
-    if (item.to === '/management-review') return showLeadershipReview
-    if (item.to === '/reports') return showReports
-    if (item.to === '/masters') return showMasters
-    return true
-  })
-  const isMoreRoute = ['/verification', '/yokoten', '/masters', '/action-center', '/management-review', '/reports', '/audits'].some(path => location.pathname.startsWith(path))
+  const sidebarNav = dedupeNavigation(
+    roleProfile.navigation
+      .map(item => ({ ...item, ...navCatalog[item.feature] }))
+      .filter(item => item.to),
+  )
+  const primaryNav = sidebarNav.slice(0, 3)
+  const secondaryNav = sidebarNav.slice(3)
+  const isMoreRoute = secondaryNav.some(item => location.pathname.startsWith(item.to))
 
   async function handleLogout() {
     await logout()
@@ -75,8 +87,8 @@ export default function AppShell() {
     <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
       <div className="brand"><span className="brand-mark">DP</span><div><strong>Drive Pulse</strong><small>DISHA HSC</small></div></div>
       <button className="close-menu" aria-label="Close menu" onClick={() => setSidebarOpen(false)}><X /></button>
-      <div className="workspace-label">HANSAChu AUDIT SYSTEM</div>
-      <nav>{sidebarNav.map(({ to, label, icon: Icon }) => <NavLink to={to} key={to} onClick={() => setSidebarOpen(false)}><Icon size={19} /><span>{label}</span></NavLink>)}</nav>
+      <div className="workspace-label">{roleProfile.dashboardName}</div>
+      <nav>{sidebarNav.map(({ to, label, icon: Icon }) => <NavLink to={to} key={`${to}-${label}`} onClick={() => setSidebarOpen(false)}><Icon size={19} /><span>{label}</span></NavLink>)}</nav>
 
       <div className="sidebar-account">
         <div className="user-card"><span>{roleLabel.slice(0, 2).toUpperCase()}</span><div><strong>{roleLabel}</strong><small>+91 {mobileNo}</small></div></div>
@@ -89,7 +101,7 @@ export default function AppShell() {
     <main>
       <header className="topbar">
         <button className="menu-button" aria-label="Open menu" onClick={() => setSidebarOpen(true)}><Menu /></button>
-        <div className="mobile-brand"><span className="brand-mark">DP</span><strong>Drive Pulse</strong></div>
+        <div className="mobile-brand"><span className="brand-mark">DP</span><strong>{roleProfile.dashboardName}</strong></div>
         <div className="topbar-actions">
           <div className="header-identity"><strong>{roleLabel}</strong><span>+91 {mobileNo}</span></div>
           <button className="icon-button notification-trigger" aria-label="Notifications" onClick={() => setNotificationOpen(current => !current)}><Bell size={20} />{unreadCount > 0 && <i />}{unreadCount > 0 && <span>{unreadCount > 9 ? '9+' : unreadCount}</span>}</button>
@@ -112,13 +124,16 @@ export default function AppShell() {
               <div className="notification-main">
                 <div><strong>{item.title}</strong><span>{item.category}</span></div>
                 <p>{item.detail}</p>
-                <small>{item.dateTime} Â· {item.status}</small>
+                <small>{item.dateTime} | {item.status}</small>
               </div>
               <ArrowRight size={16} />
             </button>)}
           </div>
           <div className="notification-popover-footer">
-            <button className="secondary-button full" onClick={() => { setNotificationOpen(false); navigate('/action-center') }}>Open Disha Action Hub</button>
+            <button className="secondary-button full" onClick={() => {
+              setNotificationOpen(false)
+              navigate(canAccessFeature(user, 'action-center') ? '/action-center' : '/reports')
+            }}>Open {canAccessFeature(user, 'action-center') ? 'Action Workspace' : 'Reports'}</button>
           </div>
         </section>
       </>}
@@ -129,18 +144,13 @@ export default function AppShell() {
       <button className="more-scrim" aria-label="Close More menu" onClick={() => setMoreOpen(false)} />
       <section className="more-sheet" aria-label="More menu">
         <div className="more-sheet-head"><div><strong>{roleLabel}</strong><span>+91 {mobileNo}</span></div><button aria-label="Close More menu" onClick={() => setMoreOpen(false)}><X size={20} /></button></div>
-        <button onClick={() => openMoreRoute('/action-center')}><Bell size={20} /><span><strong>Disha Action Hub</strong><small>NG action closure workflow</small></span></button>
-        {showLeadershipReview && <button onClick={() => openMoreRoute('/management-review')}><FileBarChart size={20} /><span><strong>Review Center</strong><small>Executive boardroom review</small></span></button>}
-        {showReports && <button onClick={() => openMoreRoute('/reports')}><BarChart3 size={20} /><span><strong>Reports</strong><small>Compliance and action insights</small></span></button>}
-        <button onClick={() => openMoreRoute('/verification')}><ShieldCheck size={20} /><span><strong>Verification</strong><small>Review closure evidence</small></span></button>
-        <button onClick={() => openMoreRoute('/yokoten')}><BookOpenCheck size={20} /><span><strong>Yokoten Library</strong><small>Shared improvement practices</small></span></button>
-        {showMasters && <button onClick={() => openMoreRoute('/masters')}><Settings2 size={20} /><span><strong>Masters</strong><small>Users and configuration</small></span></button>}
-        <button className="mobile-logout" onClick={handleLogout}><LogOut size={20} /><span><strong>Logout</strong><small>Sign out of Drive Pulse â€“ DISHA HSC</small></span></button>
+        {secondaryNav.map(({ to, label, description, icon: Icon }) => <button key={`${to}-${label}`} onClick={() => openMoreRoute(to)}><Icon size={20} /><span><strong>{label}</strong><small>{description}</small></span></button>)}
+        <button className="mobile-logout" onClick={handleLogout}><LogOut size={20} /><span><strong>Logout</strong><small>Sign out of Drive Pulse | DISHA HSC</small></span></button>
       </section>
     </>}
 
     <nav className="bottom-nav">
-      {mobileNav.map(({ to, label, icon: Icon }) => <NavLink to={to} key={to}><Icon size={20} /><span>{label}</span></NavLink>)}
+      {primaryNav.map(({ to, label, icon: Icon }) => <NavLink to={to} key={`${to}-${label}`}><Icon size={20} /><span>{label}</span></NavLink>)}
       <button className={moreOpen || isMoreRoute ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal size={20} /><span>More</span></button>
     </nav>
   </div>

@@ -158,8 +158,8 @@ function isExpenseApprover(user) {
 }
 
 function getExpenseApprovalRole(user, row = {}) {
-  const groupApproved = cleanText(row.groupDishaApprovalStatus || row.group_disha_approval_status) === 'Approved'
-  const groupRejected = cleanText(row.groupDishaApprovalStatus || row.group_disha_approval_status) === 'Rejected'
+  const groupApproved = cleanText(row.groupDishaApprovalStatus || row.group_disha_review_status || row.group_disha_approval_status) === 'approved by group disha'
+  const groupRejected = cleanText(row.groupDishaApprovalStatus || row.group_disha_review_status || row.group_disha_approval_status).includes('rejected')
   const groupPending = !groupApproved && !groupRejected
 
   if (isSystemAdmin(user)) return groupPending ? 'Group Disha HSC PIC' : 'CEO'
@@ -172,31 +172,124 @@ function getExpenseApprovalRole(user, row = {}) {
 
 function expenseStatus(row = {}) {
   const text = cleanText(row.expense_approval_status)
-  if (text && !['Pending Approval', 'Pending CEO Approval'].includes(text)) return text
+  if (text && !['Pending Approval', 'Pending CEO Approval', 'Pending Group Disha HSC PIC Approval', 'Pending Group DISHA Review'].includes(text)) return text
 
-  const groupStatus = cleanText(row.group_disha_approval_status)
-  const ceoStatus = cleanText(row.ceo_approval_status)
+  const groupStatus = cleanText(row.group_disha_review_status || row.group_disha_approval_status)
+  const ceoStatus = cleanText(row.ceo_review_status || row.ceo_approval_status)
 
   if (!row.monetary_support_required && !row.expense_approval_required) return 'Not Required'
-  if (groupStatus === 'Rejected' || ceoStatus === 'Rejected') return 'Rejected'
-  if (ceoStatus === 'Approved') return 'Approved'
-  if (groupStatus === 'Approved') return 'Pending CEO Approval'
-  return 'Pending Group Disha HSC PIC Approval'
+  if (ceoStatus === 'approved') return 'CEO Approved'
+  if (ceoStatus === 'rejected by ceo' || ceoStatus === 'rejected') return 'CEO Rejected'
+  if (ceoStatus === 'resubmitted for ceo approval' || ceoStatus === 'resubmitted') return 'Resubmitted for CEO Approval'
+  if (groupStatus === 'approved') return 'Pending CEO Approval'
+  if (groupStatus === 'rejected by group disha' || groupStatus === 'rejected') return 'Rejected by Group DISHA'
+  if (groupStatus === 'resubmitted for group review' || groupStatus === 'resubmitted') return 'Resubmitted for Group DISHA Review'
+  return 'Pending Group DISHA Review'
 }
 
 function groupDishaApprovalStatus(row = {}) {
-  const text = cleanText(row.group_disha_approval_status)
-  if (text) return text
-  return row.monetary_support_required || row.expense_approval_required ? 'Pending' : 'Not Required'
+  const text = cleanText(row.group_disha_review_status || row.group_disha_approval_status)
+  if (text === 'approved') return 'Approved by Group DISHA'
+  if (text === 'rejected by group disha' || text === 'rejected') return 'Rejected by Group DISHA'
+  if (text === 'resubmitted for group review' || text === 'resubmitted') return 'Resubmitted for Group DISHA Review'
+  if (text === 'pending group review' || text === 'pending') return 'Pending Group DISHA Review'
+  return row.monetary_support_required || row.expense_approval_required ? 'Pending Group DISHA Review' : 'Not Required'
 }
 
 function ceoApprovalStatus(row = {}) {
-  const text = cleanText(row.ceo_approval_status)
-  if (text === 'Approved' || text === 'Rejected') return text
+  const text = cleanText(row.ceo_review_status || row.ceo_approval_status)
+  if (text === 'approved') return 'CEO Approved'
+  if (text === 'rejected by ceo' || text === 'rejected') return 'CEO Rejected'
+  if (text === 'pending ceo approval' || text === 'pending') return 'Pending CEO Approval'
+  if (text === 'resubmitted for ceo approval' || text === 'resubmitted') return 'Resubmitted for CEO Approval'
   if (!row.monetary_support_required && !row.expense_approval_required) return 'Not Required'
-  if (cleanText(row.group_disha_approval_status) === 'Rejected') return 'Not Required'
-  if (text) return text
-  return 'Pending'
+  if (cleanText(row.group_disha_review_status || row.group_disha_approval_status) === 'rejected by group disha') return 'Not Required'
+  if (cleanText(row.group_disha_review_status || row.group_disha_approval_status) === 'approved') return 'Pending CEO Approval'
+  return 'Not Required'
+}
+
+function currentFinancialStage(row = {}) {
+  const expense = expenseStatus(row)
+  if (expense === 'CEO Approved') return 'CEO Approved'
+  if (expense === 'CEO Rejected') return 'Returned by CEO'
+  if (expense === 'Pending CEO Approval' || expense === 'Resubmitted for CEO Approval') return 'CEO Review'
+  if (expense === 'Rejected by Group DISHA') return 'Returned by Group DISHA'
+  if (expense === 'Pending Group DISHA Review' || expense === 'Resubmitted for Group DISHA Review') return 'Group DISHA Review'
+  if (expense === 'Not Required') return 'Not Required'
+  return 'Submitted'
+}
+
+function currentApprover(row = {}) {
+  const expense = expenseStatus(row)
+  if (['Pending CEO Approval', 'Resubmitted for CEO Approval'].includes(expense)) return 'CEO'
+  if (['Pending Group DISHA Review', 'Resubmitted for Group DISHA Review'].includes(expense)) return 'Group DISHA HSC PIC'
+  if (expense === 'CEO Approved') return 'Auditor Verification'
+  return 'PIC'
+}
+
+function buildApprovalTimeline(row = {}) {
+  const expense = expenseStatus(row)
+  const group = groupDishaApprovalStatus(row)
+  const ceo = ceoApprovalStatus(row)
+  return [
+    { label: 'Submitted', tone: 'blue', active: Boolean(row.monetary_support_required) },
+    {
+      label: group,
+      tone: group.includes('Rejected') ? 'red' : group.includes('Approved') ? 'green' : 'amber',
+      active: row.monetary_support_required,
+    },
+    {
+      label: ceo,
+      tone: ceo.includes('Rejected') ? 'red' : ceo.includes('Approved') ? 'green' : ceo.includes('Pending') || ceo.includes('Resubmitted') ? 'amber' : 'neutral',
+      active: row.monetary_support_required && group === 'Approved by Group DISHA',
+    },
+    {
+      label: row.verification_status && cleanText(row.verification_status) !== 'not started' ? 'Verification Pending' : 'Verification',
+      tone: cleanText(row.verification_status).includes('pending') ? 'amber' : cleanText(row.verification_status) === 'verified' ? 'green' : 'neutral',
+      active: expense === 'CEO Approved',
+    },
+    { label: cleanText(row.closure_status) === 'closed' ? 'Closed' : 'Closed', tone: cleanText(row.closure_status) === 'closed' ? 'green' : 'neutral', active: cleanText(row.closure_status) === 'closed' },
+  ]
+}
+
+function buildApprovalHistory(row = {}) {
+  const raw = Array.isArray(row.approval_history) ? row.approval_history : []
+  const mapped = raw.map(entry => ({
+    id: entry.id || `${entry.level}-${entry.timestamp}`,
+    level: cleanDisplayValue(entry.level || entry.role || '', 'Approval'),
+    decision: cleanDisplayValue(entry.decision || entry.new_status || '', 'Updated'),
+    remarks: cleanDisplayValue(entry.remarks || '', 'No remarks'),
+    previousStatus: cleanDisplayValue(entry.previous_status || '', 'Not available'),
+    newStatus: cleanDisplayValue(entry.new_status || '', 'Not available'),
+    at: formatDate(entry.timestamp || ''),
+  }))
+
+  if (mapped.length) return mapped
+
+  const fallback = []
+  if (row.group_disha_review_status || row.group_disha_approval_status) {
+    fallback.push({
+      id: 'group-current',
+      level: 'Group Review',
+      decision: groupDishaApprovalStatus(row),
+      remarks: cleanDisplayValue(row.group_disha_review_remarks || row.group_disha_comments || row.group_disha_approval_remarks, 'No remarks'),
+      previousStatus: 'Submitted',
+      newStatus: groupDishaApprovalStatus(row),
+      at: formatDate(row.group_disha_review_date || row.group_disha_approved_at || ''),
+    })
+  }
+  if (row.ceo_review_status || row.ceo_approval_status) {
+    fallback.push({
+      id: 'ceo-current',
+      level: 'CEO Review',
+      decision: ceoApprovalStatus(row),
+      remarks: cleanDisplayValue(row.ceo_review_remarks || row.ceo_comments, 'No remarks'),
+      previousStatus: groupDishaApprovalStatus(row),
+      newStatus: ceoApprovalStatus(row),
+      at: formatDate(row.ceo_review_date || row.ceo_approved_at || ''),
+    })
+  }
+  return fallback
 }
 
 function getExpenseDraftStatus(item = {}, form = {}) {
@@ -415,8 +508,8 @@ export default function ActionCenter() {
 
   function canActOnExpense(item) {
     const overallStatus = expenseStatus(item)
-    if (!item.monetarySupportRequired || ['Approved', 'Rejected', 'Not Required'].includes(overallStatus)) return false
-    if (cleanText(item.groupDishaApprovalStatus || item.group_disha_approval_status) === 'Approved') {
+    if (!item.monetarySupportRequired || ['CEO Approved', 'Not Required'].includes(overallStatus)) return false
+    if (['Pending CEO Approval', 'Resubmitted for CEO Approval'].includes(item.ceoApprovalStatus || overallStatus)) {
       return isSystemAdmin(currentUser) || hasRole(currentUser, ['ceo'])
     }
     return isSystemAdmin(currentUser) || hasRole(currentUser, ['group disha hsc pic', 'group disha pic'])
@@ -459,11 +552,20 @@ export default function ActionCenter() {
       setError('')
       try {
         const client = requireSupabase()
-        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, audit_department, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, group_disha_approval_status, group_disha_approved_by, group_disha_approved_at, group_disha_approval_remarks, ceo_approval_required, ceo_approval_status, ceo_approved_by, ceo_approved_at, ceo_comments, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files, is_void, void_reason'
-        const allNgResult = await client
+        const stableSelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, audit_department, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, group_disha_approval_status, group_disha_approved_by, group_disha_approved_at, group_disha_approval_remarks, group_disha_comments, group_disha_review_required, group_disha_review_status, group_disha_reviewed_by, group_disha_review_date, group_disha_review_remarks, ceo_approval_required, ceo_approval_status, ceo_approved_by, ceo_approved_at, ceo_comments, ceo_review_status, ceo_reviewed_by, ceo_review_date, ceo_review_remarks, approval_level, approval_history, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files, is_void, void_reason'
+        const legacySelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, result, current_condition_observed, tentative_closing_date, action_status, assigned_pic_user_id, submitted_for_review_at, closure_status, verification_status, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, responded_by, created_at, updated_at, sub_question_text, audit_location, audit_department, pic_for_ng, cause_category, root_cause, action_plan_items, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, collaboration_required, collaborator_user_id, collaborator_name, collaborator_mobile, support_department, support_required, support_remarks, support_status, monetary_support_required, expected_expense_amount, expense_purpose, expense_category, expense_approval_required, expense_approver_role, expense_approval_status, group_disha_approval_status, group_disha_approved_by, group_disha_approved_at, group_disha_approval_remarks, ceo_approval_required, ceo_approval_status, ceo_approved_by, ceo_approved_at, ceo_comments, extension_request_status, extension_requested_date, extension_reason, review_comments, quotation_files, is_void, void_reason'
+        let allNgResult = await client
           .from('audit_responses')
           .select(stableSelect)
           .eq('result', 'NG')
+
+        if (allNgResult.error && /column .* does not exist/i.test(allNgResult.error.message || '')) {
+          allNgResult = await client
+            .from('audit_responses')
+            .select(legacySelect)
+            .eq('result', 'NG')
+        }
+
         if (allNgResult.error) throw allNgResult.error
 
         if (!cancelled) {
@@ -569,11 +671,26 @@ export default function ActionCenter() {
       expensePurpose: cleanText(item.expense_purpose),
       expenseCategory: cleanText(item.expense_category),
       expenseApprovalRequired: Boolean(item.expense_approval_required ?? item.monetary_support_required),
-      expenseApproverRole: cleanText(item.expense_approver_role) || (cleanText(item.group_disha_approval_status) === 'Approved' ? 'CEO' : 'Group Disha HSC PIC'),
+      expenseApproverRole: cleanText(item.expense_approver_role) || (cleanText(item.group_disha_review_status || item.group_disha_approval_status) === 'approved' ? 'CEO' : 'Group Disha HSC PIC'),
       expenseApprovalStatus: expenseStatus(item),
       groupDishaApprovalStatus: groupDishaApprovalStatus(item),
+      groupDishaReviewRequired: Boolean(item.group_disha_review_required ?? item.monetary_support_required),
+      groupDishaReviewStatus: cleanText(item.group_disha_review_status || item.group_disha_approval_status),
+      groupDishaReviewedBy: item.group_disha_reviewed_by || item.group_disha_approved_by || '',
+      groupDishaReviewDate: formatDate(item.group_disha_review_date || item.group_disha_approved_at),
+      groupDishaReviewRemarks: cleanText(item.group_disha_review_remarks || item.group_disha_comments || item.group_disha_approval_remarks),
       ceoApprovalRequired: Boolean(item.ceo_approval_required ?? item.expense_approval_required ?? item.monetary_support_required),
       ceoApprovalStatus: ceoApprovalStatus(item),
+      ceoReviewStatus: cleanText(item.ceo_review_status || item.ceo_approval_status),
+      ceoReviewedBy: item.ceo_reviewed_by || item.ceo_approved_by || '',
+      ceoReviewDate: formatDate(item.ceo_review_date || item.ceo_approved_at),
+      ceoReviewRemarks: cleanText(item.ceo_review_remarks || item.ceo_comments),
+      approvalLevel: cleanText(item.approval_level) || 'group review',
+      approvalHistory: Array.isArray(item.approval_history) ? item.approval_history : [],
+      currentStage: currentFinancialStage(item),
+      currentApprover: currentApprover(item),
+      approvalTimeline: buildApprovalTimeline(item),
+      approvalTrail: buildApprovalHistory(item),
       extensionRequestStatus: cleanText(item.extension_request_status),
       extensionRequestedDate: formatDate(item.extension_requested_date),
       extensionReason: cleanText(item.extension_reason),
@@ -597,7 +714,10 @@ export default function ActionCenter() {
       overdue: isOverdue(card),
       closed: status === 'Closed',
       reviewReady: card.reviewQueue,
-      expensePending: card.monetarySupportRequired && !['Approved', 'Rejected', 'Not Required'].includes(expenseStatus(item)),
+      expensePending: card.monetarySupportRequired && !['CEO Approved', 'Not Required'].includes(expenseStatus(item)),
+      groupReviewPending: card.monetarySupportRequired && ['Pending Group DISHA Review', 'Resubmitted for Group DISHA Review'].includes(card.groupDishaApprovalStatus),
+      ceoReviewPending: card.monetarySupportRequired && ['Pending CEO Approval', 'Resubmitted for CEO Approval'].includes(card.ceoApprovalStatus),
+      canResubmitExpense: card.monetarySupportRequired && ['Rejected by Group DISHA', 'CEO Rejected'].includes(card.expenseApprovalStatus),
     }
   }), [ngItems, audits, currentUser])
 
@@ -605,7 +725,9 @@ export default function ActionCenter() {
   const raisedCards = useMemo(() => hubCards.filter(item => item.isRaisedByMe), [hubCards])
   const collaborationCards = useMemo(() => hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)), [adminView, hubCards])
   const reviewCards = useMemo(() => hubCards.filter(item => item.reviewReady), [hubCards])
-  const expenseCards = useMemo(() => hubCards.filter(item => item.expensePending && canActOnExpense(item)), [hubCards, currentUser])
+  const groupReviewCards = useMemo(() => hubCards.filter(item => item.groupReviewPending && canActOnExpense(item)), [hubCards, currentUser])
+  const ceoReviewCards = useMemo(() => hubCards.filter(item => item.ceoReviewPending && canActOnExpense(item)), [hubCards, currentUser])
+  const expenseCards = useMemo(() => [...groupReviewCards, ...ceoReviewCards], [groupReviewCards, ceoReviewCards])
   const completedCards = useMemo(() => hubCards.filter(item => item.closed), [hubCards])
   const allCards = hubCards
 
@@ -615,11 +737,13 @@ export default function ActionCenter() {
     if (auditorView || adminView) tabs.push({ key: 'raised', label: 'Raised by Me', count: raisedCards.length })
     tabs.push({ key: 'collaboration', label: 'Collaboration', count: collaborationCards.length })
     if (reviewerView || adminView || expenseApproverView) tabs.push({ key: 'review', label: 'Review Queue', count: reviewCards.length })
-    if (expenseApproverView) tabs.push({ key: 'expense', label: 'Expense Approvals', count: expenseCards.length })
+    if (expenseApproverView && hasRole(currentUser, ['group disha hsc pic', 'group disha pic'])) tabs.push({ key: 'financial-review', label: 'Financial Review Queue', count: groupReviewCards.length })
+    if (expenseApproverView && hasRole(currentUser, ['ceo'])) tabs.push({ key: 'financial-approval', label: 'Financial Approval Queue', count: ceoReviewCards.length })
+    if (expenseApproverView && !hasRole(currentUser, ['group disha hsc pic', 'group disha pic', 'ceo'])) tabs.push({ key: 'expense', label: 'Expense Approvals', count: expenseCards.length })
     tabs.push({ key: 'completed', label: 'Completed / Closed', count: completedCards.length })
     if (adminView) tabs.push({ key: 'all', label: 'All NG Actions', count: allCards.length })
     return tabs
-  }, [adminView, auditorView, reviewerView, expenseApproverView, assignedCards, raisedCards, collaborationCards, reviewCards, expenseCards, completedCards, allCards])
+  }, [adminView, auditorView, reviewerView, expenseApproverView, assignedCards, raisedCards, collaborationCards, reviewCards, groupReviewCards, ceoReviewCards, expenseCards, completedCards, allCards, currentUser])
 
   useEffect(() => {
     if (visibleTabs.length && !visibleTabs.some(tab => tab.key === activeTab)) setActiveTab(visibleTabs[0].key)
@@ -635,11 +759,13 @@ export default function ActionCenter() {
     if (activeTab === 'raised') return hubCards.filter(item => item.isRaisedByMe)
     if (activeTab === 'collaboration') return hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired))
     if (activeTab === 'review') return hubCards.filter(item => item.reviewQueue)
+    if (activeTab === 'financial-review') return groupReviewCards
+    if (activeTab === 'financial-approval') return ceoReviewCards
     if (activeTab === 'expense') return expenseCards
     if (activeTab === 'completed') return hubCards.filter(item => item.closed)
     if (activeTab === 'all') return hubCards
     return hubCards.filter(item => item.isAssigned && !item.closed)
-  }, [activeTab, expenseCards, hubCards])
+  }, [activeTab, adminView, ceoReviewCards, expenseCards, groupReviewCards, hubCards])
 
   useEffect(() => {
     if (activeTab === 'review' && hubCards.length && !hubRows.length) {
@@ -661,7 +787,7 @@ export default function ActionCenter() {
   }, [actionForm.newQuotationFiles])
 
   function openActionForm(item) {
-    const canOpenForApproval = expenseApproverView && activeTab === 'expense'
+    const canOpenForApproval = expenseApproverView && ['expense', 'financial-review', 'financial-approval'].includes(activeTab)
     if (!adminView && !item.isAssigned && !item.isCollaborator && !canOpenForApproval) {
       setActionMessage('Only the assigned PIC, collaborator, or System Admin can update this action.')
       return
@@ -990,7 +1116,7 @@ export default function ActionCenter() {
       })
       if (saveError) throw saveError
       await deleteRemovedQuotationFiles(currentItem?.quotationFiles, quotationFiles)
-      setActionMessage('Sent for approval')
+      setActionMessage(currentItem?.canResubmitExpense ? 'Resubmitted for approval' : 'Sent for approval')
       cleanFileList(actionForm.newQuotationFiles).forEach(file => {
         if (file.previewUrl) URL.revokeObjectURL(file.previewUrl)
       })
@@ -1037,7 +1163,9 @@ export default function ActionCenter() {
         p_comments: comments || null,
       })
       if (approvalError) throw approvalError
-      setActionMessage(decision === 'Approved' ? 'Expense approved' : 'Expense rejected')
+      setActionMessage(decision === 'Approved'
+        ? (['Pending CEO Approval', 'Resubmitted for CEO Approval'].includes(item.ceoApprovalStatus) ? 'CEO approval recorded' : 'Forwarded to CEO after Group DISHA approval')
+        : (['Pending CEO Approval', 'Resubmitted for CEO Approval'].includes(item.ceoApprovalStatus) ? 'CEO rejection recorded' : 'Returned to PIC by Group DISHA'))
       setEditingNgId('')
       setRefreshKey(current => current + 1)
     } catch (approvalError) {
@@ -1083,7 +1211,9 @@ export default function ActionCenter() {
       <ActionCard title="Assigned to Me" count={assignedCards.length} meta="My open actions" tone="blue" icon={Target} onClick={() => setActiveTab('assigned')} />
       <ActionCard title="Collaboration" count={collaborationCards.length} meta="Support requested" tone="amber" icon={Clock3} onClick={() => setActiveTab('collaboration')} />
       <ActionCard title="Review Queue" count={reviewCards.length} meta="Submitted or extension" tone="green" icon={CheckCircle2} onClick={() => setActiveTab('review')} />
-      {expenseApproverView && <ActionCard title="Expense Approvals" count={expenseCards.length} meta="CEO pending monetary cases" tone="amber" icon={ShieldAlert} onClick={() => setActiveTab('expense')} />}
+      {expenseApproverView && hasRole(currentUser, ['group disha hsc pic', 'group disha pic']) && <ActionCard title="Financial Review Queue" count={groupReviewCards.length} meta="Group DISHA technical scrutiny" tone="amber" icon={ShieldAlert} onClick={() => setActiveTab('financial-review')} />}
+      {expenseApproverView && hasRole(currentUser, ['ceo']) && <ActionCard title="Financial Approval Queue" count={ceoReviewCards.length} meta="CEO final monetary approvals" tone="amber" icon={ShieldAlert} onClick={() => setActiveTab('financial-approval')} />}
+      {expenseApproverView && !hasRole(currentUser, ['group disha hsc pic', 'group disha pic', 'ceo']) && <ActionCard title="Expense Approvals" count={expenseCards.length} meta="Monetary review queue" tone="amber" icon={ShieldAlert} onClick={() => setActiveTab('expense')} />}
       <ActionCard title="Completed / Closed" count={completedCards.length} meta="Closed cases" tone="blue" icon={ShieldAlert} onClick={() => setActiveTab('completed')} />
       {adminView && <ActionCard title="All NG Actions" count={hubCards.length} meta="Admin view" tone="blue" icon={Bell} onClick={() => setActiveTab('all')} />}
     </section>
@@ -1127,11 +1257,13 @@ export default function ActionCenter() {
                 <small className="action-meta">Action Plan Status: {item.reviewReady ? 'Ready for review' : item.status}</small>
                 <small className="action-meta">Closure Submitted Date: {item.actualClosureDate || 'Not available'}</small>
               </div>
-              {activeTab === 'expense' && <>
+              {['expense', 'financial-review', 'financial-approval'].includes(activeTab) && <>
                 <small>Support Department: {item.supportDepartment || 'Not available'}</small>
                 <small>Expected Expense: {formatMoney(item.expectedExpenseAmount)}</small>
                 <small>Expense Purpose: {item.expensePurpose || 'Not available'}</small>
                 <small>Expense Approval: {item.expenseApprovalStatus}</small>
+                <small>Current Stage: {item.currentStage}</small>
+                <small>Current Approver: {item.currentApprover}</small>
                 <small>Quotation Status: {item.quotationFiles.length ? 'Quotation Attached' : 'No Quotation Attached'}</small>
               </>}
               {detailNgId === item.id && <section className="capa-detail-fields">
@@ -1148,6 +1280,12 @@ export default function ActionCenter() {
                 <div><span>Support Department</span><strong>{item.supportDepartment || 'Not available'}</strong></div>
                 <div><span>Support Status</span><strong>{item.supportStatus || 'Not available'}</strong></div>
                 <div><span>Expense Approval</span><strong>{item.expenseApprovalStatus}</strong></div>
+                <div><span>Current Stage</span><strong>{item.currentStage}</strong></div>
+                <div><span>Current Approver</span><strong>{item.currentApprover}</strong></div>
+                <div><span>Group DISHA Recommendation</span><strong>{item.groupDishaApprovalStatus || 'Not available'}</strong></div>
+                <div><span>Group DISHA Remarks</span><strong>{item.groupDishaReviewRemarks || 'Not available'}</strong></div>
+                <div><span>CEO Review Status</span><strong>{item.ceoApprovalStatus || 'Not available'}</strong></div>
+                <div><span>CEO Remarks</span><strong>{item.ceoReviewRemarks || 'Not available'}</strong></div>
                 <div><span>Expected Expense</span><strong>{formatMoney(item.expectedExpenseAmount)}</strong></div>
                 <div><span>Quotation Status</span><strong>{item.quotationFiles.length ? 'Quotation Attached' : 'No Quotation Attached'}</strong></div>
                 <div><span>Action Taken</span><strong>{item.actionTaken || item.closureRemarks || 'Not available'}</strong></div>
@@ -1186,6 +1324,24 @@ export default function ActionCenter() {
                       <span>{stage}</span>
                     </div>
                   ))}
+                </div>
+              </section>}
+              {detailNgId === item.id && item.monetarySupportRequired && <section className="action-process-flow">
+                <div className="panel-head compact-head"><div><span className="eyebrow">FINANCIAL APPROVAL STATUS</span><h2>Approval timeline</h2></div></div>
+                <div className="action-stepper financial">
+                  {item.approvalTimeline.map((stage, index) => (
+                    <div key={`${stage.label}-${index}`} className={`action-step ${stage.active ? 'active' : ''} ${stage.tone}`}>
+                      <b>{index + 1}</b>
+                      <span>{stage.label}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="approval-history-list">
+                  {item.approvalTrail.length ? item.approvalTrail.map(entry => <div key={entry.id} className="approval-history-row">
+                    <strong>{entry.level}: {entry.decision}</strong>
+                    <span>{entry.at || 'Date unavailable'} | {entry.previousStatus} {'->'} {entry.newStatus}</span>
+                    <small>{entry.remarks}</small>
+                  </div>) : <div className="action-empty compact">No approval history recorded yet.</div>}
                 </div>
               </section>}
               {editingNgId === item.id && <section className="form-grid wide">
@@ -1235,11 +1391,15 @@ export default function ActionCenter() {
                       </select>
                     </label>
                     <label className="wide">Expense Purpose<textarea rows="2" value={actionForm.expensePurpose} onChange={event => updateActionForm('expensePurpose', event.target.value)} /></label>
-                    <div className="wide approval-status-line"><span>Expense Approval Status</span><StatusBadge>{getExpenseDraftStatus(item, actionForm)}</StatusBadge></div>
-                    <div className="wide approval-status-line"><span>Group Disha HSC PIC Approval</span><StatusBadge>{item.groupDishaApprovalStatus || 'Pending'}</StatusBadge></div>
-                    <div className="wide approval-status-line"><span>CEO Approval</span><StatusBadge>{item.ceoApprovalStatus || 'Pending'}</StatusBadge></div>
+                    <div className="wide approval-status-line"><span>Expense Approval Status</span><StatusBadge>{item.canResubmitExpense ? item.expenseApprovalStatus : getExpenseDraftStatus(item, actionForm)}</StatusBadge></div>
+                    <div className="wide approval-status-line"><span>Current Stage</span><StatusBadge>{item.currentStage}</StatusBadge></div>
+                    <div className="wide approval-status-line"><span>Current Approver</span><StatusBadge>{item.currentApprover}</StatusBadge></div>
+                    <div className="wide approval-status-line"><span>Group DISHA Review</span><StatusBadge>{item.groupDishaApprovalStatus || 'Pending Group DISHA Review'}</StatusBadge></div>
+                    <div className="wide approval-status-line"><span>CEO Approval</span><StatusBadge>{item.ceoApprovalStatus || 'Not Required'}</StatusBadge></div>
+                    {item.groupDishaReviewRemarks && <div className="wide"><span className="action-section-label">Group DISHA Remarks</span><p className="quotation-upload-copy">{item.groupDishaReviewRemarks}</p></div>}
+                    {item.ceoReviewRemarks && <div className="wide"><span className="action-section-label">CEO Remarks</span><p className="quotation-upload-copy">{item.ceoReviewRemarks}</p></div>}
                     {canUpdate && actionForm.monetarySupportRequired && <div className="wide">
-                      <button className="primary-button" type="button" onClick={sendExpenseForApproval} disabled={actionSaving}>Send for Approval</button>
+                      <button className="primary-button" type="button" onClick={sendExpenseForApproval} disabled={actionSaving}>{item.canResubmitExpense ? 'Resubmit for Approval' : 'Send for Approval'}</button>
                     </div>}
                     <div className="wide quotation-upload-panel">
                       <div className="panel-head compact-head">
@@ -1305,7 +1465,7 @@ export default function ActionCenter() {
                 <label>Evidence Upload<input type="file" multiple onChange={handleClosureEvidence} /></label>
                 <label>Request Extension Date<input type="date" value={actionForm.extensionRequestedDate} onChange={event => updateActionForm('extensionRequestedDate', event.target.value)} /></label>
                 <label className="wide">Extension Reason<textarea rows="2" value={actionForm.extensionReason} onChange={event => updateActionForm('extensionReason', event.target.value)} /></label>
-                {(canReview || item.reviewReady || (expenseApproverView && activeTab === 'expense')) && <label className="wide">Review Comments<textarea rows="2" value={actionForm.reviewComments} onChange={event => updateActionForm('reviewComments', event.target.value)} /></label>}
+                {(canReview || item.reviewReady || (expenseApproverView && ['expense', 'financial-review', 'financial-approval'].includes(activeTab))) && <label className="wide">Review Comments<textarea rows="2" value={actionForm.reviewComments} onChange={event => updateActionForm('reviewComments', event.target.value)} /></label>}
                 {actionMessage && <div className="wide audit-checklist-note" role="alert"><span>{actionMessage}</span></div>}
                 <div className="wide form-footer">
                   <button className="secondary-button" type="button" onClick={() => setEditingNgId('')} disabled={actionSaving}>Cancel</button>
@@ -1314,18 +1474,18 @@ export default function ActionCenter() {
                     {canUpdate && <button className="primary-button" type="button" onClick={() => saveAction('Submitted for Review')} disabled={actionSaving}>Submit for Review</button>}
                     {canReview && item.reviewReady && <button className="primary-button" type="button" onClick={() => reviewAction(item, 'Approve Closure')} disabled={actionSaving}>Approve Closure</button>}
                     {canReview && item.reviewReady && <button className="secondary-button" type="button" onClick={() => reviewAction(item, 'Send Back')} disabled={actionSaving}>Send Back</button>}
-                    {expenseApproverView && activeTab === 'expense' && canActOnExpense(item) && <button className="primary-button" type="button" onClick={() => approveExpense(item, 'Approved')} disabled={actionSaving}>Approve Expense</button>}
-                    {expenseApproverView && activeTab === 'expense' && canActOnExpense(item) && <button className="secondary-button" type="button" onClick={() => approveExpense(item, 'Rejected')} disabled={actionSaving}>Reject Expense</button>}
+                    {expenseApproverView && ['expense', 'financial-review', 'financial-approval'].includes(activeTab) && canActOnExpense(item) && <button className="primary-button" type="button" onClick={() => approveExpense(item, 'Approved')} disabled={actionSaving}>{activeTab === 'financial-review' ? 'Approve & Forward to CEO' : 'Approve'}</button>}
+                    {expenseApproverView && ['expense', 'financial-review', 'financial-approval'].includes(activeTab) && canActOnExpense(item) && <button className="secondary-button" type="button" onClick={() => approveExpense(item, 'Rejected')} disabled={actionSaving}>Reject</button>}
                   </div>
                 </div>
               </section>}
             </div>
             <div className="action-row-actions">
               <button className="secondary-button" type="button" onClick={() => setDetailNgId(current => current === item.id ? '' : item.id)}>View Details</button>
-              {canUpdate ? <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Update Action</button> : <button className="secondary-button" type="button" onClick={() => setDetailNgId(item.id)}>View Progress</button>}
+              {canUpdate ? <button className="primary-button" type="button" onClick={() => openActionForm(item)}>{item.canResubmitExpense ? 'Revise & Resubmit' : 'Update Action'}</button> : <button className="secondary-button" type="button" onClick={() => setDetailNgId(item.id)}>View Progress</button>}
               {canReview && item.reviewQueue && <button className="primary-button" type="button" onClick={() => reviewAction(item, 'Approve Closure')} disabled={actionSaving}>Approve Closure</button>}
               {canReview && item.reviewQueue && <button className="secondary-button" type="button" onClick={() => reviewAction(item, 'Send Back')} disabled={actionSaving}>Send Back</button>}
-              {expenseApproverView && activeTab === 'expense' && canActOnExpense(item) && <button className="primary-button" type="button" onClick={() => openActionForm(item)}>Approve</button>}
+              {expenseApproverView && ['expense', 'financial-review', 'financial-approval'].includes(activeTab) && canActOnExpense(item) && <button className="primary-button" type="button" onClick={() => openActionForm(item)}>{activeTab === 'financial-review' ? 'Review' : 'Approve'}</button>}
             </div>
           </div>
         })}

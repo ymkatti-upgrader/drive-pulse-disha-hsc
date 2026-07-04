@@ -13,7 +13,7 @@ import MasterData from './pages/MasterData'
 import MasterImport from './pages/MasterImport'
 import YokotenLibrary from './pages/YokotenLibrary'
 import ActionCenter from './pages/ActionCenter'
-import ProtectedRoute from './auth/ProtectedRoute'
+import ProtectedRoute, { FeatureRouteGuard } from './auth/ProtectedRoute'
 import { isSystemAdmin, useAuth } from './auth/AuthContext'
 
 export default function App() {
@@ -24,18 +24,18 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route element={<AppShell />}>
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/audits/new" element={<AuditCreation />} />
-        <Route path="/audits/:id/conduct" element={<ConductAudit />} />
+        <Route path="/audits/new" element={<FeatureRouteGuard feature="audit-workbench"><AuditCreation /></FeatureRouteGuard>} />
+        <Route path="/audits/:id/conduct" element={<FeatureRouteGuard feature="conduct-audit"><ConductAudit /></FeatureRouteGuard>} />
         <Route path="/improvements" element={<Navigate to="/action-center" replace />} />
         <Route path="/improvements/:id" element={<Navigate to="/action-center" replace />} />
         <Route path="/capa" element={<Navigate to="/action-center" replace />} />
         <Route path="/capa/:id" element={<Navigate to="/action-center" replace />} />
-        <Route path="/verification" element={<Verification />} />
-        <Route path="/yokoten" element={<YokotenLibrary />} />
-        <Route path="/reports" element={<Reports />} />
-        <Route path="/management-review" element={<ManagementReviewCenter />} />
+        <Route path="/verification" element={<FeatureRouteGuard feature="verification"><Verification /></FeatureRouteGuard>} />
+        <Route path="/yokoten" element={<FeatureRouteGuard feature="yokoten"><YokotenLibrary /></FeatureRouteGuard>} />
+        <Route path="/reports" element={<FeatureRouteGuard feature="reports"><Reports /></FeatureRouteGuard>} />
+        <Route path="/management-review" element={<FeatureRouteGuard feature="management-review"><ManagementReviewCenter /></FeatureRouteGuard>} />
         <Route path="/super-admin" element={<AdminOnly><SuperAdminControlCenter /></AdminOnly>} />
-        <Route path="/action-center" element={<ActionCenter />} />
+        <Route path="/action-center" element={<FeatureRouteGuard feature="action-center"><ActionCenter /></FeatureRouteGuard>} />
         <Route path="/masters" element={<AdminOnly><MasterData /></AdminOnly>} />
         <Route path="/masters/import" element={<AdminOnly><MasterImport /></AdminOnly>} />
         <Route path="/master-data" element={<Navigate to="/masters" replace />} />

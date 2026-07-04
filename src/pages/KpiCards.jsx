@@ -16,9 +16,10 @@ const kpis = [
   { key: 'totalMonetaryValueApproved', label: 'Total Monetary Value Approved', icon: Banknote, tone: 'green', currency: true },
 ]
 
-export default function KpiCards({ summary, onSelectKpi }) {
+export default function KpiCards({ summary, onSelectKpi, visibleKeys }) {
+  const visibleCards = visibleKeys?.length ? kpis.filter(card => visibleKeys.includes(card.key)) : kpis
   return <section className="report-kpi-grid">
-    {kpis.map(card => {
+    {visibleCards.map(card => {
       const Icon = card.icon
       const value = card.currency ? formatCurrency(summary[card.key]) : summary[card.key]
       return <button key={card.key} type="button" className={`card report-kpi ${card.tone}`} onClick={() => onSelectKpi(card)}>
