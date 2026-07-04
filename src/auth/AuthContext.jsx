@@ -188,6 +188,23 @@ export function canManageDishaWorkflow(user) {
   return isGroupDishaHsc(user) || isSystemAdmin(user)
 }
 
+export function canViewReports(user) {
+  if (isSystemAdmin(user) || canManageDishaWorkflow(user)) return true
+  const roles = getUserAccess(user).flatMap(item => [item.role, item.user_type]).map(normalizedText)
+  return roles.some(role => [
+    'ceo',
+    'group functional hod',
+    'group disha hsc pic',
+    'group disha hsc',
+    'branch disha pic',
+    'branch disha hsc pic',
+    'location functional hod',
+    'auditor',
+    'viewer',
+    'ng pic',
+  ].includes(role))
+}
+
 export function canAccessSuperAdminControls(user) {
   return isSystemAdmin(user)
 }
