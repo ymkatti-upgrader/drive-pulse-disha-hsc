@@ -67,6 +67,20 @@ function lifecycleMap(rows = []) {
   return map
 }
 
+function resolveAuditForResponse(row = {}, auditMap) {
+  const auditUuid = row.audit_uuid || row.auditUuid || ''
+  if (!auditUuid) return null
+  const audit = auditMap.get(auditUuid)
+  if (!audit) return null
+  if (normalizedText(audit.status) === 'draft') return null
+  return audit
+}
+
+function isValidAuditBackedResponse(row = {}, auditMap) {
+  if (!row || row.is_void === true) return false
+  return Boolean(resolveAuditForResponse(row, auditMap))
+}
+
 function numericDuration(value) {
   const amount = Number(value)
   return Number.isFinite(amount) ? amount : null
@@ -170,10 +184,10 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
   })
 
   return (responses || [])
-    .filter(row => row && row.is_void !== true)
+    .filter(row => isValidAuditBackedResponse(row, auditMap))
     .map(row => {
       const lifecycleRow = lifecycleByResponse.get(row.id) || {}
-      const audit = auditMap.get(row.audit_uuid || row.audit_id) || {}
+      const audit = resolveAuditForResponse(row, auditMap) || {}
       const finding = findingByResponse.get(row.id) || {}
       const auditLocation = row.audit_location || locationMap.get(audit.location_id)?.name || locationMap.get(audit.location_id)?.code || ''
       const auditDepartment = row.audit_department || departmentMap.get(audit.department_id)?.name || ''
@@ -285,7 +299,7 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
         reopenCount: Number(lifecycleRow.reopen_count) || 0,
       }
     })
-    .filter(row => row.auditId)
+    .filter(row => row.auditUuid)
 }
 
 export function filterRows(rows, filters = {}) {
@@ -382,7 +396,7 @@ export function paginateRows(rows, page = 1, pageSize = 10) {
 }
 
 export function buildSummary(rows = []) {
-  const nonVoid = rows.filter(row => row)
+  const nonVoid = rows.filter(row => row && (row.auditUuid || row.auditId) && normalizedText(row.auditStatus) !== 'draft')
   const ngRows = nonVoid.filter(row => normalizedText(row.result) === 'ng')
   const openCapas = ngRows.filter(row => !['closed', 'approved'].includes(normalizedText(row.closureStatus)) && !row.closureCompletedAt && !row.actualClosureDate)
   const closedCapas = ngRows.filter(row => ['closed', 'approved'].includes(normalizedText(row.closureStatus)) || row.closureCompletedAt || row.actualClosureDate)
@@ -411,7 +425,7 @@ export function buildSummary(rows = []) {
   const overallCompliance = nonVoid.length ? Math.round((nonVoid.filter(row => normalizedText(row.result) !== 'ng').length / nonVoid.length) * 100) : 0
 
   return {
-    totalAudits: new Set(nonVoid.map(row => row.auditId)).size,
+    totalAudits: new Set(nonVoid.map(row => row.auditUuid || row.auditId).filter(Boolean)).size,
     overallCompliance,
     totalNgFindings: ngRows.length,
     openCapas: openCapas.length,

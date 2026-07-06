@@ -49,11 +49,32 @@ export default function ManagementReviewCenter() {
   const { stories } = useYokoten()
   const { checklist, loading: checklistLoading, error: checklistError } = useAuditChecklist()
   const [printFriendly, setPrintFriendly] = useState(false)
+  const auditLookup = useMemo(() => {
+    const map = new Map()
+    audits.forEach(item => {
+      ;[item.id, item.auditId, item.auditNumber, item.audit_no, item.audit_number].forEach(key => {
+        if (key) map.set(String(key), item)
+      })
+    })
+    return map
+  }, [audits])
 
   const review = useMemo(() => {
     const submittedAudits = audits.filter(item => item.status === 'Submitted')
-    const activeCapas = capas.filter(item => item.status !== 'Closed' && item.status !== 'Cancelled' && item.status !== 'Yokoten Shared')
-    const verificationPending = capas.filter(item => ['Evidence Uploaded', 'Verification Pending'].includes(item.status))
+    const activeCapas = capas.filter(item => {
+      if (item.status === 'Closed' || item.status === 'Cancelled' || item.status === 'Yokoten Shared') return false
+      const linkedAuditId = item.auditUuid || item.audit_uuid || item.auditId || item.audit
+      if (!linkedAuditId) return false
+      const audit = auditLookup.get(linkedAuditId)
+      return Boolean(audit) && String(audit.status || '').trim().toLowerCase() !== 'draft'
+    })
+    const verificationPending = capas.filter(item => {
+      if (!['Evidence Uploaded', 'Verification Pending'].includes(item.status)) return false
+      const linkedAuditId = item.auditUuid || item.audit_uuid || item.auditId || item.audit
+      if (!linkedAuditId) return false
+      const audit = auditLookup.get(linkedAuditId)
+      return Boolean(audit) && String(audit.status || '').trim().toLowerCase() !== 'draft'
+    })
     const criticalFindings = activeCapas.filter(item => item.riskLevel === 'Critical' || item.severity === 'Critical')
     const repeatFindings = activeCapas.filter(item => item.repeatFinding)
     return {
@@ -66,7 +87,7 @@ export default function ManagementReviewCenter() {
       checklistCount: checklist.length,
       departmentFindings: groupCounts(activeCapas, 'departmentOwner'),
     }
-  }, [audits, capas, checklist.length])
+  }, [auditLookup, audits, capas, checklist.length])
 
   const hasData = audits.length || capas.length || checklist.length || stories.length
 

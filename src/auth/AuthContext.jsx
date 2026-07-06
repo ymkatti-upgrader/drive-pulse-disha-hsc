@@ -256,11 +256,12 @@ const ROLE_PROFILES = {
     description: 'Application administration, masters, user access, audit setup, and platform governance.',
     navigation: [
       { feature: 'dashboard', label: 'Dashboard', description: 'Administrative home' },
+      { feature: 'action-center', label: 'Action Center', description: 'Full action workspace' },
       { feature: 'audit-workbench', label: 'Audit Control', description: 'Create and assign audits' },
       { feature: 'masters', label: 'Masters', description: 'Users, roles, locations, checklist' },
       { feature: 'reports', label: 'Reports', description: 'Cross-functional analytics' },
     ],
-    features: ['dashboard', 'audit-workbench', 'masters', 'reports', 'super-admin'],
+    features: ['dashboard', 'action-center', 'audit-workbench', 'masters', 'reports', 'super-admin'],
   },
   ceo: {
     id: 'ceo',
@@ -317,12 +318,13 @@ const ROLE_PROFILES = {
     description: 'Assigned audits, findings capture, verification, and audit history for your scope.',
     navigation: [
       { feature: 'dashboard', label: 'Dashboard', description: 'Audit home' },
+      { feature: 'action-center', label: 'Action Center', description: 'Review and verification workspace' },
       { feature: 'audit-workbench', label: 'My Audits', description: 'Assigned and draft audits' },
       { feature: 'conduct-audit', label: 'Conduct Audit', description: 'Execution workbench' },
       { feature: 'verification', label: 'Verification', description: 'Closure verification' },
       { feature: 'reports', label: 'Audit History', description: 'Read-only audit history' },
     ],
-    features: ['dashboard', 'audit-workbench', 'conduct-audit', 'verification', 'reports', 'yokoten'],
+    features: ['dashboard', 'action-center', 'audit-workbench', 'conduct-audit', 'verification', 'reports', 'yokoten'],
   },
   'location-functional-hod': {
     id: 'location-functional-hod',

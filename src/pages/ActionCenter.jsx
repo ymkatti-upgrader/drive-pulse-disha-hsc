@@ -2,7 +2,7 @@ import { ArrowRight, Bell, CheckCircle2, Clock3, Download, Eye, FileImage, FileT
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAudits } from '../audits/AuditContext'
-import { canManageDishaWorkflow, canViewAuditModule, isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { canAccessScope, canManageDishaWorkflow, canViewAuditModule, getRoleProfile, isSystemAdmin, useAuth } from '../auth/AuthContext'
 import { PageHeader, StatusBadge } from '../components/UI'
 import { requireSupabase } from '../supabaseClient'
 
@@ -485,10 +485,38 @@ function buildEmptyPlanRow() {
   return { id: `plan-${Date.now()}`, action: '', responsiblePerson: '', targetDate: '', status: 'Open' }
 }
 
+function getTabConfig(roleId, counts) {
+  const baseTabs = {
+    assigned: { key: 'assigned', label: 'Assigned Actions', count: counts.assigned, tone: 'blue', icon: Target, meta: 'My open actions' },
+    raised: { key: 'raised', label: 'Raised by Me', count: counts.raised, tone: 'amber', icon: Bell, meta: 'Created by me' },
+    collaboration: { key: 'collaboration', label: 'Collaboration', count: counts.collaboration, tone: 'amber', icon: Clock3, meta: 'Support requested' },
+    review: { key: 'review', label: 'Review Queue', count: counts.review, tone: 'green', icon: CheckCircle2, meta: 'Submitted or extension' },
+    verification: { key: 'verification', label: 'Verification', count: counts.verification, tone: 'green', icon: ShieldAlert, meta: 'Evidence awaiting review' },
+    financialReview: { key: 'financial-review', label: 'Financial Approvals', count: counts.financialReview, tone: 'amber', icon: ShieldAlert, meta: 'Group DISHA technical scrutiny' },
+    financialApproval: { key: 'financial-approval', label: 'Financial Approvals', count: counts.financialApproval, tone: 'amber', icon: ShieldAlert, meta: 'CEO final monetary approvals' },
+    expense: { key: 'expense', label: 'Expense Approvals', count: counts.expense, tone: 'amber', icon: ShieldAlert, meta: 'Monetary review queue' },
+    completed: { key: 'completed', label: 'Completed', count: counts.completed, tone: 'blue', icon: ShieldAlert, meta: 'Closed cases' },
+    all: { key: 'all', label: counts.allLabel, count: counts.all, tone: 'blue', icon: Bell, meta: counts.allMeta },
+  }
+
+  const roleTabs = {
+    'system-admin': ['assigned', 'raised', 'collaboration', 'review', 'verification', 'financialReview', 'financialApproval', 'expense', 'completed', 'all'],
+    ceo: ['financialApproval', 'completed', 'all'],
+    'group-disha': ['review', 'financialReview', 'completed'],
+    'group-functional-hod': ['assigned', 'collaboration', 'completed', 'all'],
+    'location-functional-hod': ['assigned', 'collaboration', 'completed'],
+    'branch-auditor': ['review', 'verification', 'completed'],
+    viewer: [],
+  }
+
+  return (roleTabs[roleId] || roleTabs.viewer).map(key => baseTabs[key]).filter(Boolean)
+}
+
 export default function ActionCenter() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { audits } = useAudits()
+  const roleProfile = useMemo(() => getRoleProfile(user), [user])
   const [activeTab, setActiveTab] = useState('assigned')
   const [ngItems, setNgItems] = useState([])
   const [people, setPeople] = useState([])
@@ -505,6 +533,15 @@ export default function ActionCenter() {
   const auditorView = canViewAuditModule(currentUser)
   const reviewerView = canManageDishaWorkflow(currentUser)
   const expenseApproverView = isExpenseApprover(currentUser)
+  const auditLookup = useMemo(() => {
+    const map = new Map()
+    audits.forEach(item => {
+      ;[item.id, item.auditId, item.auditNumber, item.audit_no, item.audit_number].forEach(key => {
+        if (key) map.set(String(key), item)
+      })
+    })
+    return map
+  }, [audits])
 
   function canActOnExpense(item) {
     const overallStatus = expenseStatus(item)
@@ -572,7 +609,11 @@ export default function ActionCenter() {
           const fetchedRows = allNgResult.data || []
           const nonVoidRows = fetchedRows.filter(item => item.is_void !== true)
           const validRows = nonVoidRows.filter(item => {
-            const audit = audits.find(auditItem => auditItem.id === (item.audit_uuid || item.audit_id)) || {}
+            const auditUuid = item.audit_uuid || ''
+            if (!auditUuid) return false
+            const audit = auditLookup.get(auditUuid)
+            if (!audit || String(audit.status || '').trim().toLowerCase() === 'draft') return false
+            if (!canAccessScope(currentUser, { department: item.audit_department || audit.department || '', location: item.audit_location || audit.location || '' })) return false
             return isValidNgAction(item, audit)
           })
           const assignedRows = validRows.filter(item => isAssignedToUser(item, activeUser))
@@ -621,10 +662,10 @@ export default function ActionCenter() {
 
     loadNgItems()
     return () => { cancelled = true }
-  }, [adminView, auditorView, reviewerView, expenseApproverView, user, currentUser, audits, refreshKey])
+  }, [adminView, auditorView, reviewerView, expenseApproverView, user, currentUser, refreshKey, auditLookup])
 
   const hubCards = useMemo(() => ngItems.map(item => {
-    const audit = audits.find(auditItem => auditItem.id === (item.audit_uuid || item.audit_id)) || {}
+    const audit = auditLookup.get(item.audit_uuid || item.audit_id) || {}
     const fullDepartment = resolveActionDepartment(item, audit)
     const workflowStatus = item.action_status || item.closure_status || ''
     const status = getSimpleStatus(workflowStatus, item)
@@ -726,6 +767,7 @@ export default function ActionCenter() {
   const raisedCards = useMemo(() => hubCards.filter(item => item.isRaisedByMe), [hubCards])
   const collaborationCards = useMemo(() => hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired)), [adminView, hubCards])
   const reviewCards = useMemo(() => hubCards.filter(item => item.reviewReady), [hubCards])
+  const verificationCards = useMemo(() => hubCards.filter(item => ['Evidence Uploaded', 'Verification Pending'].includes(item.status) || ['pending', 'verification pending'].includes(normalizeText(item.verificationStatus))), [hubCards])
   const groupReviewCards = useMemo(() => hubCards.filter(item => item.groupReviewPending && canActOnExpense(item)), [hubCards, currentUser])
   const ceoReviewCards = useMemo(() => hubCards.filter(item => item.ceoReviewPending && canActOnExpense(item)), [hubCards, currentUser])
   const expenseCards = useMemo(() => [...groupReviewCards, ...ceoReviewCards], [groupReviewCards, ceoReviewCards])
@@ -733,18 +775,32 @@ export default function ActionCenter() {
   const allCards = hubCards
 
   const visibleTabs = useMemo(() => {
-    const tabs = []
-    tabs.push({ key: 'assigned', label: 'Assigned to Me', count: assignedCards.length })
-    if (auditorView || adminView) tabs.push({ key: 'raised', label: 'Raised by Me', count: raisedCards.length })
-    tabs.push({ key: 'collaboration', label: 'Collaboration', count: collaborationCards.length })
-    if (reviewerView || adminView || expenseApproverView) tabs.push({ key: 'review', label: 'Review Queue', count: reviewCards.length })
-    if (expenseApproverView && hasRole(currentUser, ['group disha hsc pic', 'group disha pic'])) tabs.push({ key: 'financial-review', label: 'Financial Review Queue', count: groupReviewCards.length })
-    if (expenseApproverView && hasRole(currentUser, ['ceo'])) tabs.push({ key: 'financial-approval', label: 'Financial Approval Queue', count: ceoReviewCards.length })
-    if (expenseApproverView && !hasRole(currentUser, ['group disha hsc pic', 'group disha pic', 'ceo'])) tabs.push({ key: 'expense', label: 'Expense Approvals', count: expenseCards.length })
-    tabs.push({ key: 'completed', label: 'Completed / Closed', count: completedCards.length })
-    if (adminView) tabs.push({ key: 'all', label: 'All NG Actions', count: allCards.length })
-    return tabs
-  }, [adminView, auditorView, reviewerView, expenseApproverView, assignedCards, raisedCards, collaborationCards, reviewCards, groupReviewCards, ceoReviewCards, expenseCards, completedCards, allCards, currentUser])
+    return getTabConfig(roleProfile.id, {
+      assigned: assignedCards.length,
+      raised: raisedCards.length,
+      collaboration: collaborationCards.length,
+      review: reviewCards.length,
+      verification: verificationCards.length,
+      financialReview: groupReviewCards.length,
+      financialApproval: ceoReviewCards.length,
+      expense: expenseCards.length,
+      completed: completedCards.length,
+      all: allCards.length,
+      allLabel: roleProfile.id === 'system-admin'
+        ? 'Full Action Center'
+        : roleProfile.id === 'ceo'
+          ? 'Executive Monitoring'
+          : roleProfile.id === 'group-functional-hod'
+            ? 'Department-wide Action Center'
+            : 'All NG Actions',
+      allMeta: roleProfile.id === 'ceo'
+        ? 'Cross-location executive oversight'
+        : roleProfile.id === 'group-functional-hod'
+          ? 'Department scope across all locations'
+          : 'Admin view',
+    })
+  }, [roleProfile.id, assignedCards.length, raisedCards.length, collaborationCards.length, reviewCards.length, verificationCards.length, groupReviewCards.length, ceoReviewCards.length, expenseCards.length, completedCards.length, allCards.length])
+  const hasActionAccess = visibleTabs.length > 0
 
   useEffect(() => {
     if (visibleTabs.length && !visibleTabs.some(tab => tab.key === activeTab)) setActiveTab(visibleTabs[0].key)
@@ -760,6 +816,7 @@ export default function ActionCenter() {
     if (activeTab === 'raised') return hubCards.filter(item => item.isRaisedByMe)
     if (activeTab === 'collaboration') return hubCards.filter(item => item.isCollaborator || (adminView && item.collaborationRequired))
     if (activeTab === 'review') return hubCards.filter(item => item.reviewQueue)
+    if (activeTab === 'verification') return hubCards.filter(item => ['Evidence Uploaded', 'Verification Pending'].includes(item.status) || ['pending', 'verification pending'].includes(normalizeText(item.verificationStatus)))
     if (activeTab === 'financial-review') return groupReviewCards
     if (activeTab === 'financial-approval') return ceoReviewCards
     if (activeTab === 'expense') return expenseCards
@@ -1208,21 +1265,14 @@ export default function ActionCenter() {
   return <div className="action-center-page">
     <PageHeader eyebrow="DISHA ACTION HUB" title="Disha Action Hub" description="Simple journey: Understand Issue -> Root Cause -> Support / Collaboration -> Action Plan -> Evidence & Submit." action={<button className="secondary-button" onClick={() => navigate('/dashboard')}><TrendingUp size={17} /> Back to Dashboard</button>} />
 
-    <section className="action-summary-grid">
-      <ActionCard title="Assigned to Me" count={assignedCards.length} meta="My open actions" tone="blue" icon={Target} onClick={() => setActiveTab('assigned')} />
-      <ActionCard title="Collaboration" count={collaborationCards.length} meta="Support requested" tone="amber" icon={Clock3} onClick={() => setActiveTab('collaboration')} />
-      <ActionCard title="Review Queue" count={reviewCards.length} meta="Submitted or extension" tone="green" icon={CheckCircle2} onClick={() => setActiveTab('review')} />
-      {expenseApproverView && hasRole(currentUser, ['group disha hsc pic', 'group disha pic']) && <ActionCard title="Financial Review Queue" count={groupReviewCards.length} meta="Group DISHA technical scrutiny" tone="amber" icon={ShieldAlert} onClick={() => setActiveTab('financial-review')} />}
-      {expenseApproverView && hasRole(currentUser, ['ceo']) && <ActionCard title="Financial Approval Queue" count={ceoReviewCards.length} meta="CEO final monetary approvals" tone="amber" icon={ShieldAlert} onClick={() => setActiveTab('financial-approval')} />}
-      {expenseApproverView && !hasRole(currentUser, ['group disha hsc pic', 'group disha pic', 'ceo']) && <ActionCard title="Expense Approvals" count={expenseCards.length} meta="Monetary review queue" tone="amber" icon={ShieldAlert} onClick={() => setActiveTab('expense')} />}
-      <ActionCard title="Completed / Closed" count={completedCards.length} meta="Closed cases" tone="blue" icon={ShieldAlert} onClick={() => setActiveTab('completed')} />
-      {adminView && <ActionCard title="All NG Actions" count={hubCards.length} meta="Admin view" tone="blue" icon={Bell} onClick={() => setActiveTab('all')} />}
-    </section>
-
     <section className="card action-section-card">
       <div className="panel-head"><div><span className="eyebrow">SIMPLIFIED ACTION JOURNEY</span><h2>NG action items</h2></div><Bell /></div>
-      <div className="tabs">{visibleTabs.map(tab => <button className={activeTab === tab.key ? 'active' : ''} onClick={() => setActiveTab(tab.key)} key={tab.key}>{tab.label} <span>{tab.count}</span></button>)}</div>
-      {loading ? <div className="action-empty">{activeTab === 'review' ? 'Loading review items...' : 'Loading Disha Action Hub...'}</div> : error ? <div className="action-empty">{error}</div> : hubRows.length === 0 ? <div className="action-empty">{activeTab === 'review' ? 'No items pending for review.' : activeTab === 'assigned' ? 'No valid NG action items assigned.' : 'No NG actions found for this view.'}</div> : <div className="audit-review-table">
+      {hasActionAccess && <section className="action-summary-grid">
+        {visibleTabs.map(tab => <ActionCard key={tab.key} title={tab.label} count={tab.count} meta={tab.meta} tone={tab.tone} icon={tab.icon} onClick={() => setActiveTab(tab.key)} />)}
+      </section>}
+      {!hasActionAccess && <div className="action-empty">No Action Center tabs are available for this role.</div>}
+      {hasActionAccess && <div className="tabs">{visibleTabs.map(tab => <button className={activeTab === tab.key ? 'active' : ''} onClick={() => setActiveTab(tab.key)} key={tab.key}>{tab.label} <span>{tab.count}</span></button>)}</div>}
+      {hasActionAccess && (loading ? <div className="action-empty">{activeTab === 'review' ? 'Loading review items...' : 'Loading Disha Action Hub...'}</div> : error ? <div className="action-empty">{error}</div> : hubRows.length === 0 ? <div className="action-empty">{activeTab === 'review' ? 'No items pending for review.' : activeTab === 'assigned' ? 'No valid NG action items assigned.' : 'No NG actions found for this view.'}</div> : <div className="audit-review-table">
         {hubRows.map(item => {
           const canUpdate = adminView || item.isAssigned || item.isCollaborator
           const canReview = reviewerView || adminView
@@ -1490,7 +1540,7 @@ export default function ActionCenter() {
             </div>
           </div>
         })}
-      </div>}
+      </div>)}
     </section>
   </div>
 }

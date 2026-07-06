@@ -119,6 +119,15 @@ export default function Dashboard() {
   const { capas } = useCapas()
   const { stories } = useYokoten()
   const [lifecycleRows, setLifecycleRows] = useState([])
+  const auditLookup = useMemo(() => {
+    const map = new Map()
+    audits.forEach(item => {
+      ;[item.id, item.auditId, item.auditNumber, item.audit_no, item.audit_number].forEach(key => {
+        if (key) map.set(String(key), item)
+      })
+    })
+    return map
+  }, [audits])
 
   useEffect(() => {
     if (!['ceo', 'group-functional-hod'].includes(roleProfile.id)) {
@@ -151,9 +160,15 @@ export default function Dashboard() {
   }, [audits, roleProfile.id, user])
 
   const scopedCapas = useMemo(() => {
-    if (['system-admin', 'ceo', 'group-disha'].includes(roleProfile.id)) return capas
-    return filterByUserAccess(user, capas, item => ({ department: item.departmentOwner || item.department || item.area, location: item.location || item.locationAspect }))
-  }, [capas, roleProfile.id, user])
+    const linkedCapas = (['system-admin', 'ceo', 'group-disha'].includes(roleProfile.id) ? capas : filterByUserAccess(user, capas, item => ({ department: item.departmentOwner || item.department || item.area, location: item.location || item.locationAspect })))
+      .filter(item => {
+        const linkedAuditId = item.auditUuid || item.audit_uuid || item.auditId || item.audit
+        if (!linkedAuditId) return false
+        const audit = auditLookup.get(linkedAuditId)
+        return Boolean(audit) && String(audit.status || '').trim().toLowerCase() !== 'draft'
+      })
+    return linkedCapas
+  }, [auditLookup, capas, roleProfile.id, user])
 
   const derived = useMemo(() => {
     const submittedAudits = scopedAudits.filter(item => item.status === 'Submitted')
