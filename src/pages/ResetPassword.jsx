@@ -1,24 +1,42 @@
 import { useMemo, useState } from 'react'
 import { Check, Eye, EyeOff, LockKeyhole } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth, validatePassword } from '../auth/AuthContext'
+import { DEFAULT_PASSWORD, getRoleProfile, useAuth, validatePassword } from '../auth/AuthContext'
 
-export default function ResetPassword() {
+export default function ForcePasswordReset() {
+  const [currentPassword, setCurrentPassword] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
   const { changePassword, user } = useAuth()
   const navigate = useNavigate()
   const validation = useMemo(() => validatePassword(password), [password])
+  const roleProfile = useMemo(() => getRoleProfile(user), [user])
+  const mustResetMessage = 'For security reasons, please change your default password before continuing.'
+
+  function validateForm() {
+    if (!currentPassword.trim()) return 'Current password is required.'
+    if (password === DEFAULT_PASSWORD) return 'New password cannot be the default password.'
+    if (password.length < 8) return 'New password must be at least 8 characters.'
+    if (password !== confirmPassword) return 'New password and confirm password do not match.'
+    if (!validation.valid) return 'New password must include uppercase, lowercase, number, and special character.'
+    return ''
+  }
 
   async function handleSubmit(event) {
     event.preventDefault()
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.')
+    const formError = validateForm()
+    if (formError) {
+      setError(formError)
       return
     }
-    const result = await changePassword(password)
+
+    setSaving(true)
+    setError('')
+    const result = await changePassword(currentPassword, password)
+    setSaving(false)
     if (!result.ok) {
       setError(result.error)
       return
@@ -34,19 +52,49 @@ export default function ResetPassword() {
       </div>
 
       <div className="login-heading">
-        <h1>Reset password</h1>
-        <p>Mobile login ID: +91 {user?.mobile_no}. Create a new password before accessing dashboard.</p>
+        <h1>Change password</h1>
+        <p>{mustResetMessage}</p>
+        <p>Signed in as {user?.employee_name || 'User'} - {roleProfile.label}</p>
+      </div>
+
+      <label className="field-label" htmlFor="current-password">Current Password</label>
+      <div className="password-field">
+        <input
+          id="current-password"
+          type={showPassword ? 'text' : 'password'}
+          autoComplete="current-password"
+          placeholder="Enter current password"
+          value={currentPassword}
+          onChange={event => { setCurrentPassword(event.target.value); setError('') }}
+          required
+        />
+        <button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>
       </div>
 
       <label className="field-label" htmlFor="new-password">New Password</label>
       <div className="password-field">
-        <input id="new-password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Enter new password" value={password} onChange={event => { setPassword(event.target.value); setError('') }} required />
-        <button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+        <input
+          id="new-password"
+          type={showPassword ? 'text' : 'password'}
+          autoComplete="new-password"
+          placeholder="Enter new password"
+          value={password}
+          onChange={event => { setPassword(event.target.value); setError('') }}
+          required
+        />
       </div>
 
-      <label className="field-label" htmlFor="confirm-password">Confirm Password</label>
+      <label className="field-label" htmlFor="confirm-password">Confirm New Password</label>
       <div className="password-field">
-        <input id="confirm-password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Confirm new password" value={confirmPassword} onChange={event => { setConfirmPassword(event.target.value); setError('') }} required />
+        <input
+          id="confirm-password"
+          type={showPassword ? 'text' : 'password'}
+          autoComplete="new-password"
+          placeholder="Confirm new password"
+          value={confirmPassword}
+          onChange={event => { setConfirmPassword(event.target.value); setError('') }}
+          required
+        />
       </div>
 
       <div className="password-rule-list">
@@ -55,8 +103,8 @@ export default function ResetPassword() {
 
       {error && <span className="validation-message" role="alert">{error}</span>}
 
-      <button className="primary-button full" type="submit" disabled={!validation.valid || !confirmPassword}>
-        <LockKeyhole size={18} /> Update Password
+      <button className="primary-button full" type="submit" disabled={saving || !currentPassword || !password || !confirmPassword}>
+        <LockKeyhole size={18} /> {saving ? 'Updating Password' : 'Update Password'}
       </button>
     </form>
   </main>

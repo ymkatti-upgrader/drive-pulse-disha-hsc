@@ -6,6 +6,7 @@ export default function ProtectedRoute() {
   const { isAuthenticated, user } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
+  const mustResetPassword = Boolean(user?.must_reset_password ?? user?.must_change_password)
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -14,7 +15,7 @@ export default function ProtectedRoute() {
   }, [isAuthenticated, navigate, location.pathname])
 
   if (!isAuthenticated) return <Navigate to="/login" replace state={{ from: location.pathname }} />
-  if (user?.must_change_password && location.pathname !== '/reset-password') return <Navigate to="/reset-password" replace />
+  if (mustResetPassword && location.pathname !== '/force-password-reset') return <Navigate to="/force-password-reset" replace />
 
   return <Outlet />
 }

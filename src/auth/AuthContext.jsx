@@ -85,6 +85,25 @@ function normalizeActive(value) {
   return true
 }
 
+export async function hashPasswordValue(value) {
+  const text = String(value ?? '')
+  const bytes = new TextEncoder().encode(text)
+  if (globalThis.crypto?.subtle) {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+    return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
+  }
+  return text
+}
+
+async function passwordMatchesStoredValue(enteredPassword, storedPassword, storedHash) {
+  const normalizedEntered = String(enteredPassword ?? '').trim()
+  const normalizedStored = String(storedPassword ?? '').trim()
+  const normalizedHash = String(storedHash ?? '').trim()
+  if (normalizedHash) return (await hashPasswordValue(normalizedEntered)) === normalizedHash
+  if (/^[0-9a-f]{64}$/i.test(normalizedStored)) return (await hashPasswordValue(normalizedEntered)) === normalizedStored
+  return normalizedEntered === normalizedStored
+}
+
 function normalizedText(value) {
   return String(value || '').trim().toLowerCase()
 }
@@ -109,7 +128,7 @@ function matchesUserAccess(user, terms) {
 
 function sanitizeUser(user) {
   if (!user) return null
-  const { password, ...safeUser } = user
+  const { password, password_hash, ...safeUser } = user
   return safeUser
 }
 
@@ -119,6 +138,12 @@ function toSessionUser(user, mappings) {
     employee_name: user.employee_name,
     mobile_no: user.mobile_no,
     active: user.active,
+    must_reset_password: Boolean(user.must_reset_password ?? user.must_change_password),
+    must_change_password: Boolean(user.must_reset_password ?? user.must_change_password),
+    password_changed_at: user.password_changed_at || null,
+    last_login_at: user.last_login_at || null,
+    failed_login_attempts: Number(user.failed_login_attempts) || 0,
+    account_locked: Boolean(user.account_locked),
     access: (mappings || []).map(mapping => ({
       role: mapping.role || '',
       department: mapping.department || '',
@@ -143,6 +168,9 @@ function normalizeImportRow(row) {
     user_type: String(row.user_type || row.userType || row['User Type'] || '').trim(),
   }
 }
+
+const AUTH_USER_SELECT = 'id, employee_name, mobile_no, password, password_hash, must_reset_password, active, account_locked, failed_login_attempts, password_changed_at, last_login_at, created_at, updated_at'
+const LEGACY_AUTH_USER_SELECT = 'id, employee_name, mobile_no, password, active, created_at, updated_at'
 
 export function validatePassword(value) {
   const checks = passwordRules.map(rule => ({ ...rule, valid: rule.test(value) }))
@@ -431,15 +459,37 @@ export function AuthProvider({ children }) {
         if (countError) return { ok: false, error: countError.message || 'Unable to read backend users.' }
         if (!count) return { ok: false, error: 'No users found in backend. Please import Users Master.' }
 
-        const { data: matchedUser, error: userError } = await client
+        let userResult = await client
           .from('app_users')
-          .select('id, employee_name, mobile_no, password, active')
+          .select(AUTH_USER_SELECT)
           .eq('mobile_no', enteredMobile)
           .maybeSingle()
+        if (userResult.error && /column .* does not exist/i.test(userResult.error.message || '')) {
+          userResult = await client
+            .from('app_users')
+            .select(LEGACY_AUTH_USER_SELECT)
+            .eq('mobile_no', enteredMobile)
+            .maybeSingle()
+        }
+        const { data: matchedUser, error: userError } = userResult
         if (userError) return { ok: false, error: userError.message || 'Unable to validate login.' }
         if (!matchedUser) return { ok: false, error: 'Mobile number not found in Users Master.' }
         if (!matchedUser.active) return { ok: false, error: 'User is inactive. Please contact admin.' }
-        if (String(matchedUser.password || '').trim() !== enteredPassword) return { ok: false, error: 'Incorrect password.' }
+        if (matchedUser.account_locked) return { ok: false, error: 'Account is locked. Please contact Super Admin.' }
+
+        const passwordMatched = await passwordMatchesStoredValue(enteredPassword, matchedUser.password, matchedUser.password_hash)
+        if (!passwordMatched) {
+          const failedAttempts = (Number(matchedUser.failed_login_attempts) || 0) + 1
+          await client
+            .from('app_users')
+            .update({
+              failed_login_attempts: failedAttempts,
+              account_locked: failedAttempts >= 5,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', matchedUser.id)
+          return { ok: false, error: failedAttempts >= 5 ? 'Account locked after too many failed attempts. Please contact Super Admin.' : 'Incorrect password.' }
+        }
 
         const { data: mappings, error: mappingsError } = await client
           .from('user_access_mappings')
@@ -448,8 +498,33 @@ export function AuthProvider({ children }) {
           .eq('active', true)
         if (mappingsError) return { ok: false, error: mappingsError.message || 'Unable to read user mappings.' }
 
-        const safeUser = persistSession(toSessionUser(matchedUser, mappings || []))
-        return { ok: true, user: safeUser, mustChangePassword: false }
+        const now = new Date().toISOString()
+        const { error: loginUpdateError } = await client
+          .from('app_users')
+          .update({
+            last_login_at: now,
+            failed_login_attempts: 0,
+            account_locked: false,
+            updated_at: now,
+          })
+          .eq('id', matchedUser.id)
+        if (loginUpdateError) return { ok: false, error: loginUpdateError.message || 'Unable to finalize login.' }
+
+        const sessionUser = toSessionUser({
+          ...matchedUser,
+          must_reset_password: Boolean(matchedUser.must_reset_password ?? matchedUser.must_change_password),
+          must_change_password: Boolean(matchedUser.must_reset_password ?? matchedUser.must_change_password),
+          last_login_at: now,
+          failed_login_attempts: 0,
+          account_locked: false,
+        }, mappings || [])
+        const safeUser = persistSession(sessionUser)
+        return {
+          ok: true,
+          user: safeUser,
+          mustResetPassword: Boolean(safeUser.must_reset_password || safeUser.must_change_password),
+          mustChangePassword: Boolean(safeUser.must_reset_password || safeUser.must_change_password),
+        }
       } catch (error) {
         const message = String(error?.message || '')
         if (message.includes('Supabase is not configured')) {
@@ -458,17 +533,49 @@ export function AuthProvider({ children }) {
         return { ok: false, error: message || 'Unable to connect to backend.' }
       }
     },
-    async changePassword(newPassword) {
+    async changePassword(currentPassword, newPassword) {
       if (!user) return { ok: false, error: 'Session expired. Please sign in again.' }
+      const enteredCurrentPassword = String(currentPassword ?? '').trim()
       const validation = validatePassword(newPassword)
+      if (String(newPassword).trim() === DEFAULT_PASSWORD) return { ok: false, error: 'New password cannot be the default password.', validation }
       if (!validation.valid) return { ok: false, error: 'Password does not meet the security rules.', validation }
 
       const client = requireSupabase()
-      const { data: nextUser, error } = await client
+      let currentUserResult = await client
         .from('app_users')
-        .update({ password: newPassword })
+        .select(AUTH_USER_SELECT)
         .eq('id', user.id)
-        .select('id, employee_name, mobile_no, active')
+        .maybeSingle()
+      if (currentUserResult.error && /column .* does not exist/i.test(currentUserResult.error.message || '')) {
+        currentUserResult = await client
+          .from('app_users')
+          .select(LEGACY_AUTH_USER_SELECT)
+          .eq('id', user.id)
+          .maybeSingle()
+      }
+      const { data: currentUserRow, error: currentUserError } = currentUserResult
+      if (currentUserError) return { ok: false, error: currentUserError.message || 'Unable to validate current password.' }
+      if (!currentUserRow) return { ok: false, error: 'Session expired. Please sign in again.' }
+
+      const currentMatches = await passwordMatchesStoredValue(enteredCurrentPassword, currentUserRow.password, currentUserRow.password_hash)
+      if (!currentMatches) return { ok: false, error: 'Current password does not match.' }
+
+      const hashedPassword = await hashPasswordValue(newPassword)
+      const now = new Date().toISOString()
+        const { data: nextUser, error } = await client
+        .from('app_users')
+        .update({
+          password: hashedPassword,
+          password_hash: hashedPassword,
+          must_reset_password: false,
+          password_changed_at: now,
+          last_login_at: now,
+          failed_login_attempts: 0,
+          account_locked: false,
+          updated_at: now,
+        })
+        .eq('id', user.id)
+        .select(AUTH_USER_SELECT)
         .single()
       if (error) return { ok: false, error: error.message || 'Unable to update password.' }
 
@@ -481,27 +588,38 @@ export function AuthProvider({ children }) {
       if (!incoming.length) return { ok: true, created: 0, updated: 0, mappings: 0, total: 0, imported: 0 }
 
       const mobileNumbers = [...new Set(incoming.map(row => row.mobile_no))]
-      const { data: existingUsers, error: existingError } = await client
+      const existingResult = await client
         .from('app_users')
-        .select('id, mobile_no, password')
+        .select(AUTH_USER_SELECT)
         .in('mobile_no', mobileNumbers)
+      const existingUsersResult = existingResult.error && /column .* does not exist/i.test(existingResult.error.message || '')
+        ? await client.from('app_users').select(LEGACY_AUTH_USER_SELECT).in('mobile_no', mobileNumbers)
+        : existingResult
+      const { data: existingUsers, error: existingError } = existingUsersResult
       if (existingError) throw existingError
 
       const existingByMobile = new Map((existingUsers || []).map(row => [row.mobile_no, row]))
+      const defaultPasswordHash = await hashPasswordValue(DEFAULT_PASSWORD)
       const usersByMobile = new Map()
       incoming.forEach(row => {
-        const existing = existingByMobile.get(row.mobile_no)
         const nextUser = usersByMobile.get(row.mobile_no) || {
           employee_name: '',
           mobile_no: row.mobile_no,
-          password: '',
+          password: defaultPasswordHash,
+          password_hash: defaultPasswordHash,
           active: false,
         }
 
         usersByMobile.set(row.mobile_no, {
           employee_name: row.employee_name || nextUser.employee_name,
           mobile_no: row.mobile_no,
-          password: row.password || nextUser.password || existing?.password || DEFAULT_PASSWORD,
+          password: defaultPasswordHash,
+          password_hash: defaultPasswordHash,
+          must_reset_password: true,
+          password_changed_at: null,
+          last_login_at: null,
+          failed_login_attempts: 0,
+          account_locked: false,
           active: Boolean(nextUser.active || row.active),
         })
       })
@@ -560,9 +678,19 @@ export function AuthProvider({ children }) {
       if (normalizedMobile === user.mobile_no) return { ok: false, error: 'Use password reset screen to change your own password.' }
 
       const client = requireSupabase()
+      const defaultPasswordHash = await hashPasswordValue(DEFAULT_PASSWORD)
       const { data, error } = await client
         .from('app_users')
-        .update({ password: DEFAULT_PASSWORD })
+        .update({
+          password: defaultPasswordHash,
+          password_hash: defaultPasswordHash,
+          must_reset_password: true,
+          password_changed_at: null,
+          last_login_at: null,
+          failed_login_attempts: 0,
+          account_locked: false,
+          updated_at: new Date().toISOString(),
+        })
         .eq('mobile_no', normalizedMobile)
         .eq('active', true)
         .select('id')

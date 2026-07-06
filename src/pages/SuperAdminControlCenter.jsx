@@ -312,14 +312,14 @@ export default function SuperAdminControlCenter() {
             onChange={event => { setResetMobile(event.target.value.replace(/\D/g, '').slice(0, 10)); setResetMessage('') }}
             disabled={!canAdminister}
           />
-          <button className="primary-button" disabled={!canAdminister || resetMobile.length !== 10}>Reset to {DEFAULT_PASSWORD}</button>
+          <button className="primary-button" disabled={!canAdminister || resetMobile.length !== 10}>Reset Password</button>
           {resetMessage && <p>{resetMessage}</p>}
         </form>
         <div className="admin-user-reset-list">
           {users.map(item => <button key={item.mobile_no || item.mobile} type="button" onClick={() => setResetMobile(item.mobile_no || item.mobile)}>
             <strong>{item.employee_name || item.name}</strong>
             <span>+91 {item.mobile_no || item.mobile} - {item.role}</span>
-            <StatusBadge>{item.must_change_password ? 'Must reset' : 'Active password'}</StatusBadge>
+            <StatusBadge>{item.must_reset_password || item.must_change_password ? 'Must reset' : 'Active password'}</StatusBadge>
           </button>)}
         </div>
         <div className="admin-system-grid">

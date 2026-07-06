@@ -51,7 +51,7 @@ export default function Login() {
       setError(result.error)
       return
     }
-    navigate(result.mustChangePassword ? '/reset-password' : location.state?.from || '/dashboard', { replace: true })
+    navigate(result.mustResetPassword || result.mustChangePassword ? '/force-password-reset' : location.state?.from || '/dashboard', { replace: true })
   }
 
   return <main className="login-page-simple">
@@ -86,7 +86,7 @@ export default function Login() {
 
       <div className="form-options">
         <label className="checkbox"><input type="checkbox" defaultChecked /><span><Check size={13} /></span>Remember Me</label>
-        <button type="button" className="text-button" onClick={() => setError('For V1, contact System Administrator to reset your password to Welcome@123.')}>Forgot Password?</button>
+        <button type="button" className="text-button" onClick={() => setError('For security reasons, please change your default password before continuing.')}>Forgot Password?</button>
       </div>
       <button className="primary-button full" type="submit" disabled={!password || submitting}>{submitting ? 'Signing In' : 'Sign In'} <ArrowRight size={18} /></button>
     </form>

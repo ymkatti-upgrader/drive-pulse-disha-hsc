@@ -1,7 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import AppShell from './components/AppShell'
 import Login from './pages/Login'
-import ResetPassword from './pages/ResetPassword'
+import ForcePasswordReset from './pages/ResetPassword'
 import Dashboard from './pages/Dashboard'
 import AuditCreation from './pages/AuditCreation'
 import ConductAudit from './pages/ConductAudit'
@@ -18,10 +18,12 @@ import { isSystemAdmin, useAuth } from './auth/AuthContext'
 
 export default function App() {
   const { isAuthenticated, user } = useAuth()
+  const mustResetPassword = Boolean(user?.must_reset_password ?? user?.must_change_password)
   return <Routes>
-    <Route path="/login" element={isAuthenticated ? <Navigate to={user?.must_change_password ? '/reset-password' : '/dashboard'} replace /> : <Login />} />
+    <Route path="/login" element={isAuthenticated ? <Navigate to={mustResetPassword ? '/force-password-reset' : '/dashboard'} replace /> : <Login />} />
     <Route element={<ProtectedRoute />}>
-      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/force-password-reset" element={<ForcePasswordReset />} />
+      <Route path="/reset-password" element={<Navigate to="/force-password-reset" replace />} />
       <Route element={<AppShell />}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/audits/new" element={<FeatureRouteGuard feature="audit-workbench"><AuditCreation /></FeatureRouteGuard>} />
@@ -41,7 +43,7 @@ export default function App() {
         <Route path="/master-data" element={<Navigate to="/masters" replace />} />
       </Route>
     </Route>
-    <Route path="*" element={<Navigate to={isAuthenticated ? user?.must_change_password ? '/reset-password' : '/dashboard' : '/login'} replace />} />
+    <Route path="*" element={<Navigate to={isAuthenticated ? mustResetPassword ? '/force-password-reset' : '/dashboard' : '/login'} replace />} />
   </Routes>
 }
 

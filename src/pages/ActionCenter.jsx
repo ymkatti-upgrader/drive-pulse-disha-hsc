@@ -575,13 +575,6 @@ export default function ActionCenter() {
       const activeUser = currentUser
       if (!activeUser?.id && !activeUser?.user_id) {
         setNgItems([])
-        if (typeof window !== 'undefined') {
-          console.info('ACTION CENTER USER SOURCE', {
-            authContextUser: user || null,
-            storedUser: getStoredUserCandidate(),
-          })
-          console.info('CURRENT USER', activeUser)
-        }
         return
       }
 
@@ -617,11 +610,6 @@ export default function ActionCenter() {
             return isValidNgAction(item, audit)
           })
           const assignedRows = validRows.filter(item => isAssignedToUser(item, activeUser))
-          console.info('ACTION CENTER USER SOURCE', {
-            authContextUser: user || null,
-            storedUser: getStoredUserCandidate(),
-          })
-          console.info('CURRENT USER', activeUser)
           console.info('FETCHED ROWS', {
             totalFetched: fetchedRows.length,
             afterVoidFilter: nonVoidRows.length,
