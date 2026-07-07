@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { requireSupabase, supabase } from '../supabaseClient'
 
 const AUTH_KEY = 'current_user'
@@ -432,6 +432,46 @@ export function filterByUserAccess(user, rows, getScope) {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(readStoredUser)
   const [users, setUsers] = useState([])
+
+  // Cached sessions can carry a must_reset_password value that predates a
+  // later admin/DB correction. Revalidate it against the backend on
+  // initialization instead of trusting the stale cached copy indefinitely.
+  useEffect(() => {
+    if (!user?.id || !supabase) return
+    let cancelled = false
+
+    supabase
+      .from('app_users')
+      .select('must_reset_password, active, account_locked')
+      .eq('id', user.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return
+        const freshMustReset = Boolean(data.must_reset_password)
+        setUser(current => {
+          if (!current || current.id !== user.id) return current
+          if (
+            current.must_reset_password === freshMustReset
+            && current.active === data.active
+            && current.account_locked === Boolean(data.account_locked)
+          ) return current
+
+          const nextUser = {
+            ...current,
+            must_reset_password: freshMustReset,
+            must_change_password: freshMustReset,
+            active: data.active,
+            account_locked: Boolean(data.account_locked),
+          }
+          localStorage.setItem(AUTH_KEY, JSON.stringify(nextUser))
+          return nextUser
+        })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id])
 
   function persistSession(nextUser) {
     const safeUser = sanitizeUser(nextUser)
