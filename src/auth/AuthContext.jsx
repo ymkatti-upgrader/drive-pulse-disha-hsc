@@ -3,6 +3,7 @@ import { requireSupabase, supabase } from '../supabaseClient'
 
 const AUTH_KEY = 'current_user'
 const LEGACY_AUTH_KEY = 'disha-hsc-auth'
+const SUPER_ADMIN_MOBILE_NO = '9964214342'
 const SESSION_STORAGE_KEYS = [
   AUTH_KEY,
   LEGACY_AUTH_KEY,
@@ -182,6 +183,7 @@ export function getUserAccess(user) {
 }
 
 export function getPrimaryRole(user) {
+  if (isSuperAdmin(user)) return 'Super Admin'
   const roles = getUserAccess(user).map(item => item.role).filter(Boolean)
   if (roles.some(role => normalizedText(role) === 'super admin')) return 'Super Admin'
   if (roles.some(role => normalizedText(role) === 'admin')) return 'Admin'
@@ -193,18 +195,23 @@ export function getPrimaryRole(user) {
 }
 
 export function hasFullAccess(user) {
-  return getUserAccess(user).some(item => normalizedText(item.role) === 'super admin')
+  return isSuperAdmin(user) || getUserAccess(user).some(item => normalizedText(item.role) === 'super admin')
 }
 
 export function hasAdminAccess(user) {
-  return getUserAccess(user).some(item => ['admin', 'super admin'].includes(normalizedText(item.role)))
+  return isSuperAdmin(user) || getUserAccess(user).some(item => ['admin', 'super admin'].includes(normalizedText(item.role)))
+}
+
+export function isSuperAdmin(user) {
+  return normalizeMobile(user?.mobile_no) === SUPER_ADMIN_MOBILE_NO
+    || getUserAccess(user).some(item => normalizedText(item.role) === 'super admin')
 }
 
 export function isSystemAdmin(user) {
   return getUserAccess(user).some(item => {
     const role = normalizedText(item.role)
     const userType = normalizedText(item.user_type)
-    return role === 'super admin' || role === 'system administrator' || userType === 'system admin'
+    return isSuperAdmin(user) || role === 'system administrator' || userType === 'system admin'
   })
 }
 
@@ -234,7 +241,7 @@ export function canViewReports(user) {
 }
 
 export function canAccessSuperAdminControls(user) {
-  return isSystemAdmin(user)
+  return isSuperAdmin(user)
 }
 
 export function canAccessAuditModule(user) {
@@ -384,7 +391,7 @@ const ROLE_PROFILES = {
 }
 
 function resolveRoleProfileId(user) {
-  if (isSystemAdmin(user) || hasAdminAccess(user)) return 'system-admin'
+  if (isSuperAdmin(user)) return 'system-admin'
   if (isCeo(user)) return 'ceo'
   if (isGroupDishaHsc(user)) return 'group-disha'
   if (isGroupFunctionalHod(user)) return 'group-functional-hod'
@@ -493,12 +500,6 @@ export function AuthProvider({ children }) {
         const enteredMobile = normalizeMobile(mobile)
         const enteredPassword = String(password).trim()
 
-        const { count, error: countError } = await client
-          .from('app_users')
-          .select('id', { count: 'exact', head: true })
-        if (countError) return { ok: false, error: countError.message || 'Unable to read backend users.' }
-        if (!count) return { ok: false, error: 'No users found in backend. Please import Users Master.' }
-
         let userResult = await client
           .from('app_users')
           .select(AUTH_USER_SELECT)
@@ -512,9 +513,13 @@ export function AuthProvider({ children }) {
             .maybeSingle()
         }
         const { data: matchedUser, error: userError } = userResult
-        if (userError) return { ok: false, error: userError.message || 'Unable to validate login.' }
-        if (!matchedUser) return { ok: false, error: 'Mobile number not found in Users Master.' }
-        if (!matchedUser.active) return { ok: false, error: 'User is inactive. Please contact admin.' }
+        if (userError) {
+          console.error('Supabase user lookup failed', userError)
+          return { ok: false, error: 'Unable to read backend users. Please contact Super Admin.' }
+        }
+        if (!matchedUser || !matchedUser.active) {
+          return { ok: false, error: 'User profile not found or not approved. Please contact Super Admin.' }
+        }
         if (matchedUser.account_locked) return { ok: false, error: 'Account is locked. Please contact Super Admin.' }
 
         const passwordMatched = await passwordMatchesStoredValue(enteredPassword, matchedUser.password, matchedUser.password_hash)
@@ -536,7 +541,10 @@ export function AuthProvider({ children }) {
           .select('role, department, location, user_type')
           .eq('user_id', matchedUser.id)
           .eq('active', true)
-        if (mappingsError) return { ok: false, error: mappingsError.message || 'Unable to read user mappings.' }
+        if (mappingsError) {
+          console.error('Supabase user access lookup failed', mappingsError)
+          return { ok: false, error: 'Unable to read user access details. Please contact Super Admin.' }
+        }
 
         const now = new Date().toISOString()
         const { error: loginUpdateError } = await client
@@ -570,6 +578,7 @@ export function AuthProvider({ children }) {
         if (message.includes('Supabase is not configured')) {
           return { ok: false, error: 'Supabase is not configured. Please contact administrator.' }
         }
+        console.error('Login failed', error)
         return { ok: false, error: message || 'Unable to connect to backend.' }
       }
     },

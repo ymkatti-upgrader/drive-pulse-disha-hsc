@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Building2, ClipboardList, Edit3, MapPin, Plus, Search, Tags, Trash2, Upload, Users } from 'lucide-react'
 import { PageHeader, StatusBadge } from '../components/UI'
-import { isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { isSuperAdmin, useAuth } from '../auth/AuthContext'
 import { requireSupabase } from '../supabaseClient'
 
 const masterConfig = {
@@ -118,7 +118,7 @@ export default function MasterData() {
   })
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
-  const canAdminister = isSystemAdmin(user)
+  const canAdminister = isSuperAdmin(user)
 
   useEffect(() => {
     let cancelled = false

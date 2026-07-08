@@ -2,7 +2,7 @@ import { ArrowRight, Download, Edit3, FileText, Plus, RotateCcw, ShieldCheck, Tr
 import { useMemo, useState } from 'react'
 import { PageHeader, StatusBadge } from '../components/UI'
 import { useGovernance } from '../governance/GovernanceContext'
-import { DEFAULT_PASSWORD, isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { DEFAULT_PASSWORD, isSuperAdmin, useAuth } from '../auth/AuthContext'
 
 const permissionColumns = ['view', 'add', 'edit', 'delete', 'approve', 'verify', 'close', 'export', 'aiAccess']
 
@@ -163,7 +163,7 @@ function updateRows(governance, updateSection, config, rows) {
 export default function SuperAdminControlCenter() {
   const { governance, updateSection, appendTrail, resetGovernance } = useGovernance()
   const { resetUserPassword, user, users } = useAuth()
-  const canAdminister = isSystemAdmin(user)
+  const canAdminister = isSuperAdmin(user)
   const [editor, setEditor] = useState(null)
   const [resetMobile, setResetMobile] = useState('')
   const [resetMessage, setResetMessage] = useState('')

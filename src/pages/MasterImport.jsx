@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, FileText, Upload } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { PageHeader, Progress, StatusBadge } from '../components/UI'
-import { DEFAULT_PASSWORD, isSystemAdmin, mockRoles, useAuth } from '../auth/AuthContext'
+import { DEFAULT_PASSWORD, isSuperAdmin, mockRoles, useAuth } from '../auth/AuthContext'
 import { requireSupabase } from '../supabaseClient'
 
 const checklistTemplateColumns = [
@@ -807,7 +807,7 @@ export default function MasterImport() {
   const fileInputRef = useRef(null)
   const auth = useAuth()
   const { importUsers } = auth
-  const canAdminister = isSystemAdmin(auth.user)
+  const canAdminister = isSuperAdmin(auth.user)
   const config = importTypes[selectedType]
   const rows = records[selectedType]
   const hasActiveColumn = config.columns.includes('Active')

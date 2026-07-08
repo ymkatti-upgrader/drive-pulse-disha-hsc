@@ -14,7 +14,7 @@ import MasterImport from './pages/MasterImport'
 import YokotenLibrary from './pages/YokotenLibrary'
 import ActionCenter from './pages/ActionCenter'
 import ProtectedRoute, { FeatureRouteGuard } from './auth/ProtectedRoute'
-import { isSystemAdmin, useAuth } from './auth/AuthContext'
+import { isSuperAdmin, useAuth } from './auth/AuthContext'
 
 export default function App() {
   const { isAuthenticated, user } = useAuth()
@@ -49,5 +49,5 @@ export default function App() {
 
 function AdminOnly({ children }) {
   const { user } = useAuth()
-  return isSystemAdmin(user) ? children : <Navigate to="/dashboard" replace />
+  return isSuperAdmin(user) ? children : <Navigate to="/dashboard" replace />
 }
