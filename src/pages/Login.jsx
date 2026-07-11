@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ArrowRight, Check, Eye, EyeOff } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import { buildInfo, formattedBuildLabel } from '../buildInfo'
 
 function normalizeMobile(value) {
   if (value === null || value === undefined) return ''
@@ -89,6 +90,10 @@ export default function Login() {
         <button type="button" className="text-button" onClick={() => setError('For security reasons, please change your default password before continuing.')}>Forgot Password?</button>
       </div>
       <button className="primary-button full" type="submit" disabled={!password || submitting}>{submitting ? 'Signing In' : 'Sign In'} <ArrowRight size={18} /></button>
+      <div className="app-build-indicator login-build-indicator" title={`Supabase: ${buildInfo.supabaseHost}`}>
+        <span>{formattedBuildLabel()}</span>
+        <small>{buildInfo.supabaseHost}</small>
+      </div>
     </form>
   </main>
 }

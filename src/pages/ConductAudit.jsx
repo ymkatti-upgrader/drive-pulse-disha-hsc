@@ -3,6 +3,7 @@ import { AlertCircle, Check, CheckCircle2, ChevronLeft, Minus, Save, Send, Trash
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { isInProgressAuditStatus, useAudits } from '../audits/AuditContext'
 import { useAuditChecklist } from '../audits/useAuditChecklist'
+import { checklistRowOrderValue } from '../audits/checklistSort'
 import { Progress } from '../components/UI'
 import { useCapas } from '../capa/CapaContext'
 import { canAccessAuditModule, canManageDishaWorkflow, filterByUserAccess, getPrimaryRole, isSystemAdmin, useAuth } from '../auth/AuthContext'
@@ -96,6 +97,10 @@ function describeSupabaseError(error) {
   return parts.join(' | ')
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim())
+}
+
 function logAuditSaveContext({ operation, table, user, auditId, auditLocation, auditDepartments, payload, error }) {
   const payloadKeys = Array.isArray(payload) ? Object.keys(payload[0] || {}) : Object.keys(payload || {})
   console.info('[Audit save context]', {
@@ -122,6 +127,45 @@ function isDeletableAuditStatus(status) {
 
 function isSubmittedAuditStatus(status) {
   return ['submitted', 'completed', 'approved', 'closed'].includes(normalizeText(status))
+}
+
+function humanizeConductAuditStatus(status) {
+  const value = normalizeText(status)
+  if (value === 'scheduled') return 'Scheduled'
+  if (value === 'in_progress' || value === 'in progress') return 'In Progress'
+  if (value === 'submitted') return 'Submitted'
+  if (value === 'completed') return 'Completed'
+  return status || 'Draft'
+}
+
+function mapRouteAuditRow(audit = {}, lookups = {}) {
+  return {
+    id: audit.id,
+    auditId: audit.audit_number || audit.audit_no || audit.id,
+    auditNumber: audit.audit_number || audit.audit_no || '',
+    audit_no: audit.audit_no || audit.audit_number || '',
+    audit_number: audit.audit_number || audit.audit_no || '',
+    audit_type: audit.title || '',
+    title: audit.title || '',
+    locationId: audit.location_id || '',
+    location: lookups.location?.name || lookups.location?.code || '',
+    departmentId: audit.department_id || '',
+    department: lookups.department?.name || '',
+    departments: lookups.department?.name ? [lookups.department.name] : [],
+    auditor_id: audit.auditor_id || '',
+    auditor_name: lookups.auditor?.employee_name || '',
+    start_date: audit.scheduled_date || '',
+    date: audit.scheduled_date || '',
+    scheduled_date: audit.scheduled_date || '',
+    startedAt: audit.started_at || '',
+    submittedAt: audit.submitted_at || '',
+    completedAt: audit.completed_at || '',
+    created_at: audit.created_at || '',
+    updated_at: audit.updated_at || '',
+    status: humanizeConductAuditStatus(audit.status),
+    score: audit.score ?? null,
+    created_by: audit.created_by || '',
+  }
 }
 
 function canDeleteAudit(user, audit) {
@@ -160,6 +204,9 @@ function groupChecklistByDq(items) {
     code,
     index,
     items: [...groupItems].sort((a, b) => {
+      const aRowOrder = Number.isFinite(a.rowOrder) ? a.rowOrder : checklistRowOrderValue(a)
+      const bRowOrder = Number.isFinite(b.rowOrder) ? b.rowOrder : checklistRowOrderValue(b)
+      if (aRowOrder !== bRowOrder) return aRowOrder - bRowOrder
       const aSerial = Number.isFinite(a.displaySubQuestionNum) ? a.displaySubQuestionNum : Number.isFinite(a.subQuestionNum) ? a.subQuestionNum : Number.POSITIVE_INFINITY
       const bSerial = Number.isFinite(b.displaySubQuestionNum) ? b.displaySubQuestionNum : Number.isFinite(b.subQuestionNum) ? b.subQuestionNum : Number.POSITIVE_INFINITY
       if (aSerial !== bSerial) return aSerial - bSerial
@@ -173,15 +220,6 @@ function groupChecklistByDq(items) {
 function splitDelimitedValues(value) {
   if (Array.isArray(value)) return value.map(item => String(item || '').trim()).filter(Boolean)
   return String(value || '').split(',').map(item => item.trim()).filter(Boolean)
-}
-
-function checklistDepartmentAliases(value) {
-  const normalized = normalizeText(value)
-  if (normalized === 'service') return ['service & parts']
-  if (normalized === 'u-trust') return ['used car']
-  if (normalized === 'vas') return ['value chain']
-  if (normalized === 'accessories') return ['accessory']
-  return [normalized]
 }
 
 function rowSerial(item, index) {
@@ -284,9 +322,9 @@ function buildDraftPayload(items, auditId, auditReference, respondedBy) {
 }
 
 function mergeDraftRows(items, rows) {
-  const rowsByChecklist = new Map((rows || []).map(row => [row.checklist_id, row]))
+  const rowsByChecklist = new Map((rows || []).map(row => [String(row.checklist_id || '').trim(), row]))
   return items.map(item => {
-    const row = rowsByChecklist.get(item.dbId)
+    const row = rowsByChecklist.get(String(item.dbId || '').trim())
     if (!row) return item
     const combinedCondition = combineCurrentConditionAndGap(row.current_condition_observed || row.observation || '', row.comments || '')
     return {
@@ -313,6 +351,71 @@ function mergeDraftRows(items, rows) {
       actualClosureDate: normalizeDraftDate(row.actual_closure_date),
       closureEvidenceFiles: Array.isArray(row.closure_evidence_files) ? row.closure_evidence_files : [],
     }
+  })
+}
+
+function summarizeDraftRows(rows = []) {
+  return (rows || []).slice(0, 5).map(row => ({
+    id: row.id,
+    audit_id: row.audit_id,
+    audit_uuid: row.audit_uuid,
+    checklist_id: row.checklist_id,
+    result: row.result,
+  }))
+}
+
+function summarizeChecklistItems(items = []) {
+  return (items || []).slice(0, 5).map(item => ({
+    checklist_id: item.dbId,
+    dbId: item.dbId,
+    id: item.id,
+    dqQuestionNum: item.dqQuestionNum,
+    title: item.evaluationQuestion || item.question || item.evaluationParameter || item.chapter || '',
+    result: item.result || '',
+  }))
+}
+
+function countMatchedDraftRows(items = [], rows = []) {
+  const itemIds = new Set((items || []).map(item => String(item.dbId || '').trim()).filter(Boolean))
+  return (rows || []).filter(row => itemIds.has(String(row.checklist_id || '').trim())).length
+}
+
+function mergeChecklistState(nextItems, existingItems) {
+  const existingById = new Map((existingItems || []).map(item => [item.dbId, item]))
+  return nextItems.map(item => {
+    const existing = existingById.get(item.dbId)
+    if (!existing) return item
+    return {
+      ...item,
+      ...existing,
+      auditLocation: item.auditLocation,
+      auditDepartment: item.auditDepartment,
+      tentative_closing_date: getTentativeClosingDate(existing),
+      tentativeClosingDate: getTentativeClosingDate(existing),
+    }
+  })
+}
+
+function countAnsweredItems(items = []) {
+  return (items || []).filter(item => String(item?.result || '').trim()).length
+}
+
+function getItemDqCode(item) {
+  return String(item?.id || item?.dqQuestionNum || '').trim()
+}
+
+function sortDqItems(items = []) {
+  return [...items].sort((a, b) => {
+    const aRowOrder = Number.isFinite(a.rowOrder) ? a.rowOrder : checklistRowOrderValue(a)
+    const bRowOrder = Number.isFinite(b.rowOrder) ? b.rowOrder : checklistRowOrderValue(b)
+    if (aRowOrder !== bRowOrder) return aRowOrder - bRowOrder
+    const aSerial = Number.isFinite(a.displaySubQuestionNum) ? a.displaySubQuestionNum : Number.isFinite(a.subQuestionNum) ? a.subQuestionNum : Number.POSITIVE_INFINITY
+    const bSerial = Number.isFinite(b.displaySubQuestionNum) ? b.displaySubQuestionNum : Number.isFinite(b.subQuestionNum) ? b.subQuestionNum : Number.POSITIVE_INFINITY
+    if (aSerial !== bSerial) return aSerial - bSerial
+    const aOrder = Number.isFinite(a.subQuestionOrder) ? a.subQuestionOrder : Number.POSITIVE_INFINITY
+    const bOrder = Number.isFinite(b.subQuestionOrder) ? b.subQuestionOrder : Number.POSITIVE_INFINITY
+    if (aOrder !== bOrder) return aOrder - bOrder
+    return String(a.dbId).localeCompare(String(b.dbId))
   })
 }
 
@@ -446,6 +549,8 @@ export default function ConductAudit() {
   const [pendingDialog, setPendingDialog] = useState(null)
   const [draftSaving, setDraftSaving] = useState(false)
   const [draftMessage, setDraftMessage] = useState('')
+  const [routeAudit, setRouteAudit] = useState(null)
+  const [routeAuditError, setRouteAuditError] = useState('')
   const navigate = useNavigate()
   const { user } = useAuth()
   const [resolvedRespondedById, setResolvedRespondedById] = useState('')
@@ -456,9 +561,16 @@ export default function ConductAudit() {
   const lastDraftSignatureRef = useRef('')
   const lastDraftErrorRef = useRef('')
   const draftSaveTimerRef = useRef(null)
+  const initializedChecklistKeyRef = useRef('')
+  const hydratedDraftKeyRef = useRef('')
+  const validationBlockedRef = useRef(false)
+  const latestItemsRef = useRef([])
   const canSeeAllWorkflowData = canManageDishaWorkflow(user)
   const visibleAudits = canSeeAllWorkflowData ? audits : filterByUserAccess(user, audits, item => ({ department: item.department, location: item.location }))
-  const currentAudit = visibleAudits.find(item => item.id === id) || visibleAudits.find(item => isInProgressAuditStatus(item.status)) || visibleAudits[0]
+  const currentAudit = useMemo(
+    () => routeAudit || visibleAudits.find(item => item.id === id) || visibleAudits.find(item => isInProgressAuditStatus(item.status)) || visibleAudits[0],
+    [routeAudit, visibleAudits, id],
+  )
   const auditId = currentAudit?.id || id || ''
   const canEditAudit = canAccessAuditModule(user) || isSystemAdmin(user)
   const isReadOnly = !canEditAudit
@@ -468,27 +580,133 @@ export default function ConductAudit() {
     [currentAudit?.departments, currentAudit?.department],
   )
   const currentAuditLocation = currentAudit?.location || ''
-  const selectedAuditDepartments = useMemo(
-    () => currentAuditDepartments
-      .flatMap(part => checklistDepartmentAliases(part))
-      .map(part => normalizeText(part))
-      .filter(Boolean),
-    [currentAuditDepartments],
-  )
   const selectedAuditLocation = useMemo(() => normalizeText(currentAudit?.location), [currentAudit?.location])
   const viewMode = searchParams.get('view') || 'audit'
   const isReviewMode = viewMode === 'review'
-  const visibleChecklist = useMemo(() => {
-    if (!selectedAuditDepartments.length) return checklist
-    return checklist.filter(item => {
-      const applicableDepartments = Array.isArray(item.applicableDepartments) ? item.applicableDepartments.map(normalizeText) : []
-      if (!applicableDepartments.length) return false
-      if (applicableDepartments.includes('all')) return true
-      return selectedAuditDepartments.some(department => applicableDepartments.includes(department))
-    })
-  }, [checklist, selectedAuditDepartments])
+  const selectedDqFromUrl = searchParams.get('dq') || ''
 
   useEffect(() => {
+    latestItemsRef.current = items
+  }, [items])
+
+  function safeSetItems(reason, updater) {
+    setItems(current => {
+      const next = typeof updater === 'function' ? updater(current) : updater
+      const previousAnsweredCount = countAnsweredItems(current)
+      const nextAnsweredCount = countAnsweredItems(next)
+      const blockedReasons = new Set(['checklist-init', 'draft-hydrate-db', 'draft-hydrate-local-fallback'])
+      if (validationBlockedRef.current && blockedReasons.has(reason)) {
+        console.info('[ConductAudit] safeSetItems skipped because validationBlockedRef is active', {
+          reason,
+          previousAnsweredCount,
+          nextAnsweredCount,
+          activeDqCode,
+        })
+        return current
+      }
+      latestItemsRef.current = next
+      console.info('[ConductAudit] safeSetItems', {
+        reason,
+        previousAnsweredCount,
+        nextAnsweredCount,
+        activeDqCode,
+      })
+      return next
+    })
+  }
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadRouteAudit() {
+      const routeAuditId = String(id || '').trim()
+      setRouteAudit(null)
+      setRouteAuditError('')
+      console.info('[ConductAudit] route audit UUID', routeAuditId)
+      if (!routeAuditId) return
+
+      try {
+        const client = requireSupabase()
+        const { data: auditRow, error: auditError } = await client
+          .from('audits')
+          .select('id, audit_no, audit_number, title, location_id, department_id, auditor_id, scheduled_date, started_at, submitted_at, completed_at, status, score, created_by, created_at, updated_at')
+          .eq('id', routeAuditId)
+          .maybeSingle()
+
+        if (auditError) throw auditError
+
+        console.info('[ConductAudit] fetched audit row', {
+          id: auditRow?.id || '',
+          audit_no: auditRow?.audit_no || auditRow?.audit_number || '',
+          department_id: auditRow?.department_id || '',
+          location_id: auditRow?.location_id || '',
+          audit_type: auditRow?.title || '',
+          status: auditRow?.status || '',
+        })
+        console.info('[ConductAudit] department_id used', auditRow?.department_id || '')
+
+        if (!auditRow) {
+          if (!cancelled) setRouteAuditError(`Audit not found for UUID ${routeAuditId}.`)
+          return
+        }
+
+        const [departmentResult, locationResult, auditorResult] = await Promise.all([
+          auditRow.department_id
+            ? client.from('departments').select('id, name').eq('id', auditRow.department_id).maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
+          auditRow.location_id
+            ? client.from('locations').select('id, code, name').eq('id', auditRow.location_id).maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
+          auditRow.auditor_id
+            ? client.from('app_users').select('id, employee_name').eq('id', auditRow.auditor_id).maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
+        ])
+
+        if (departmentResult.error) console.warn('[ConductAudit] department lookup failed', departmentResult.error)
+        if (locationResult.error) console.warn('[ConductAudit] location lookup failed', locationResult.error)
+        if (auditorResult.error) console.warn('[ConductAudit] auditor lookup failed', auditorResult.error)
+
+        if (!cancelled) {
+          setRouteAudit(mapRouteAuditRow(auditRow, {
+            department: departmentResult.data,
+            location: locationResult.data,
+            auditor: auditorResult.data,
+          }))
+        }
+      } catch (loadError) {
+        console.error('[ConductAudit] unable to fetch route audit by UUID', loadError)
+        if (!cancelled) setRouteAuditError(loadError?.message || 'Unable to load audit details.')
+      }
+    }
+
+    loadRouteAudit()
+    return () => { cancelled = true }
+  }, [id])
+
+  const visibleChecklist = useMemo(() => {
+    console.info('[ConductAudit] checklist table', 'audit_checklist_master')
+    console.info('[ConductAudit] checklist rows loaded', {
+      routeAuditId: id || '',
+      departmentId: currentAudit?.departmentId || '',
+      totalActiveRows: checklist.length,
+      loadedRows: checklist.length,
+    })
+    return checklist
+  }, [checklist, currentAudit?.departmentId, id])
+  const checklistStateKey = useMemo(
+    () => `${auditId || id || ''}::${visibleChecklist.map(item => item.dbId).join('|')}`,
+    [auditId, id, visibleChecklist],
+  )
+
+  useEffect(() => {
+    if (validationBlockedRef.current) {
+      console.info('[ConductAudit] checklist init skipped because validationBlockedRef is active', {
+        auditId: auditId || '',
+        checklistStateKey,
+        activeDqCode,
+      })
+      return
+    }
     const nextItems = visibleChecklist.map(item => ({
       ...item,
       currentCondition: item.currentCondition || '',
@@ -504,12 +722,24 @@ export default function ConductAudit() {
       tentative_closing_date: getTentativeClosingDate(item),
       remarks: item.remarks || '',
     }))
-    draftHydratedRef.current = false
-    lastDraftSignatureRef.current = ''
-    setItems(nextItems)
-    setActiveId(nextItems[0]?.dbId || '')
-    setActiveDqCode(nextItems[0]?.id || '')
-  }, [visibleChecklist])
+    const existingItems = latestItemsRef.current
+    const preserveCurrentAnswers = initializedChecklistKeyRef.current === checklistStateKey && existingItems.length > 0
+    const mergedItems = preserveCurrentAnswers ? mergeChecklistState(nextItems, existingItems) : nextItems
+
+    if (!preserveCurrentAnswers) {
+      draftHydratedRef.current = false
+      lastDraftSignatureRef.current = ''
+    }
+
+    initializedChecklistKeyRef.current = checklistStateKey
+    const selectedDqItems = selectedDqFromUrl
+      ? mergedItems.filter(item => getItemDqCode(item) === selectedDqFromUrl)
+      : []
+    const fallbackDqCode = selectedDqItems[0]?.id || mergedItems[0]?.id || ''
+    safeSetItems('checklist-init', mergedItems)
+    setActiveId(current => preserveCurrentAnswers && mergedItems.some(item => item.dbId === current) ? current : selectedDqItems[0]?.dbId || mergedItems[0]?.dbId || '')
+    setActiveDqCode(current => preserveCurrentAnswers && mergedItems.some(item => item.id === current) ? current : fallbackDqCode)
+  }, [visibleChecklist, checklistStateKey, currentAudit?.location, currentAudit?.departments, currentAudit?.department, selectedDqFromUrl])
 
   useEffect(() => {
     let cancelled = false
@@ -602,28 +832,54 @@ export default function ConductAudit() {
     return () => { cancelled = true }
   }, [user?.id, user?.mobile_no, user?.mobile])
 
+  const responseAuditId = currentAudit?.auditNumber || currentAudit?.audit_no || currentAudit?.audit_number || currentAudit?.auditId || auditId
+  const draftHydrationKey = `${checklistStateKey}::${responseAuditId || ''}`
+
   useEffect(() => {
     let cancelled = false
 
     async function loadDraftResponses() {
-      if (!auditId || !items.length || !currentAudit) return
+      if (!auditId || !items.length || !currentAudit || !responseAuditId) return
+      console.info('[ConductAudit][draft restore start]', {
+        routeAuditId: id || '',
+        auditId,
+        responseAuditId,
+        currentAudit: currentAudit ? {
+          id: currentAudit.id,
+          auditId: currentAudit.auditId,
+          auditNumber: currentAudit.auditNumber,
+          audit_no: currentAudit.audit_no,
+          audit_number: currentAudit.audit_number,
+          status: currentAudit.status,
+        } : null,
+        firstChecklistItems: summarizeChecklistItems(items),
+        mergeKey: 'response.checklist_id -> item.dbId',
+        hydratedDraftKey: hydratedDraftKeyRef.current,
+        draftHydrationKey,
+      })
+      if (validationBlockedRef.current) {
+        console.info('[ConductAudit] draft hydration skipped because validationBlockedRef is active', {
+          auditId,
+          checklistStateKey,
+          activeDqCode,
+        })
+        return
+      }
+      if (hydratedDraftKeyRef.current === draftHydrationKey) {
+        draftHydratedRef.current = true
+        return
+      }
       try {
         const client = requireSupabase()
-        const stableSelect = 'id, audit_id, audit_uuid, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, audit_department, pic_for_ng, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at'
-        const legacySelect = 'id, audit_id, checklist_id, dq_question_num, sub_question_num, sub_question_text, result, observation, current_condition_observed, comments, audit_location, audit_department, pic_for_ng, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, status, tentative_closing_date, evidence_files, root_cause, corrective_action_plan, preventive_action_plan, action_taken, closure_remarks, closure_evidence_files, actual_closure_date, responded_by, updated_at'
-        let draftResult = await client
-          .from('audit_responses')
-          .select(stableSelect)
-          .or(`audit_uuid.eq.${auditId},audit_id.eq.${auditId}`)
-          .eq('is_void', false)
-
-        if (draftResult.error && /column .* does not exist/i.test(draftResult.error.message || '')) {
-          draftResult = await client
-            .from('audit_responses')
-            .select(legacySelect)
-            .eq('audit_id', auditId)
-            .eq('is_void', false)
-        }
+        console.info('[ConductAudit][draft restore query]', {
+          operation: 'rpc',
+          function: 'get_audit_responses',
+          filters: {
+            p_audit_id: responseAuditId,
+          },
+        })
+        const draftResult = await client
+          .rpc('get_audit_responses', { p_audit_id: responseAuditId })
 
         if (draftResult.error) throw draftResult.error
 
@@ -638,18 +894,30 @@ export default function ConductAudit() {
         })()
 
         const rows = (draftResult.data && draftResult.data.length) ? draftResult.data : backupRows
+        const matchedItemsCount = countMatchedDraftRows(items, rows)
+        console.info('[ConductAudit][draft restore result]', {
+          responseAuditId,
+          rowsReturnedCount: draftResult.data?.length || 0,
+          backupRowsCount: backupRows.length,
+          usedSource: draftResult.data && draftResult.data.length ? 'supabase' : 'localStorage',
+          firstRows: summarizeDraftRows(rows),
+          firstChecklistItems: summarizeChecklistItems(items),
+          mergeKey: 'response.checklist_id -> item.dbId',
+          matchedItemsCount,
+        })
         if (cancelled) return
 
-        setItems(current => {
+        safeSetItems('draft-hydrate-db', current => {
           const merged = mergeDraftRows(current, rows)
           lastDraftSignatureRef.current = JSON.stringify(buildDraftPayload(
             merged,
             auditId,
-            currentAudit?.auditNumber || currentAudit?.auditId || auditId,
+            responseAuditId,
             user?.id || currentAudit?.auditor_id || '',
           ))
           return merged
         })
+        hydratedDraftKeyRef.current = draftHydrationKey
         draftHydratedRef.current = true
       } catch (loadError) {
         if (cancelled) return
@@ -658,29 +926,40 @@ export default function ConductAudit() {
           const stored = JSON.parse(localStorage.getItem(backupKey))
           const rows = Array.isArray(stored?.rows) ? stored.rows : []
           if (rows.length) {
-            setItems(current => {
+            const matchedItemsCount = countMatchedDraftRows(items, rows)
+            console.info('[ConductAudit][draft restore fallback]', {
+              responseAuditId,
+              rowsReturnedCount: rows.length,
+              firstRows: summarizeDraftRows(rows),
+              firstChecklistItems: summarizeChecklistItems(items),
+              mergeKey: 'response.checklist_id -> item.dbId',
+              matchedItemsCount,
+            })
+            safeSetItems('draft-hydrate-local-fallback', current => {
               const merged = mergeDraftRows(current, rows)
               lastDraftSignatureRef.current = JSON.stringify(buildDraftPayload(
                 merged,
                 auditId,
-                currentAudit?.auditNumber || currentAudit?.auditId || auditId,
+                responseAuditId,
                 user?.id || currentAudit?.auditor_id || '',
               ))
               return merged
             })
+            hydratedDraftKeyRef.current = draftHydrationKey
             draftHydratedRef.current = true
             return
           }
         } catch {
           // fall through
         }
+        hydratedDraftKeyRef.current = draftHydrationKey
         draftHydratedRef.current = true
       }
     }
 
     loadDraftResponses()
     return () => { cancelled = true }
-  }, [auditId, currentAudit, items.length, user?.id, visibleChecklist])
+  }, [auditId, checklistStateKey, draftHydrationKey, currentAudit, responseAuditId, items.length, user?.id, visibleChecklist, id])
 
   useEffect(() => {
     if (isReadOnly) return
@@ -695,18 +974,13 @@ export default function ConductAudit() {
   }, [isReadOnly, items, auditId, currentAudit?.location, currentAudit?.departments, currentAudit?.department, upsertAutoCapa, cancelAutoCapa])
 
   const dqGroups = useMemo(() => groupChecklistByDq(items), [items])
-  const selectedDqFromUrl = searchParams.get('dq') || ''
-  const activeGroup = dqGroups.find(group => group.code === activeDqCode || group.code === selectedDqFromUrl) || dqGroups[0] || null
-  const groupItems = activeGroup?.items || []
-  const dqItems = useMemo(() => [...groupItems].sort((a, b) => {
-    const aSerial = Number.isFinite(a.displaySubQuestionNum) ? a.displaySubQuestionNum : Number.isFinite(a.subQuestionNum) ? a.subQuestionNum : Number.POSITIVE_INFINITY
-    const bSerial = Number.isFinite(b.displaySubQuestionNum) ? b.displaySubQuestionNum : Number.isFinite(b.subQuestionNum) ? b.subQuestionNum : Number.POSITIVE_INFINITY
-    if (aSerial !== bSerial) return aSerial - bSerial
-    const aOrder = Number.isFinite(a.subQuestionOrder) ? a.subQuestionOrder : Number.POSITIVE_INFINITY
-    const bOrder = Number.isFinite(b.subQuestionOrder) ? b.subQuestionOrder : Number.POSITIVE_INFINITY
-    if (aOrder !== bOrder) return aOrder - bOrder
-    return String(a.dbId).localeCompare(String(b.dbId))
-  }), [groupItems])
+  const activeGroup = dqGroups.find(group => group.code === selectedDqFromUrl) || dqGroups.find(group => group.code === activeDqCode) || dqGroups[0] || null
+  const currentDqCode = activeGroup?.code || activeDqCode || selectedDqFromUrl || ''
+  const dqItemsFromState = useMemo(
+    () => sortDqItems(items.filter(item => getItemDqCode(item) === currentDqCode)),
+    [items, currentDqCode],
+  )
+  const dqItems = dqItemsFromState.length ? dqItemsFromState : (activeGroup?.items || [])
   const dqHeaderItem = dqItems[0] || null
   const activeItem = dqItems.find(item => item.dbId === activeId) || dqHeaderItem || items[0] || null
 
@@ -733,15 +1007,14 @@ export default function ConductAudit() {
       pending,
       ngMissingCondition,
       capaPending,
-      ready: pending === 0 && ngMissingCondition === 0 && capaPending === 0,
+      ready: pending === 0 && ngMissingCondition === 0,
     }
   }, [items, capas, auditId])
 
   const progress = completion.total ? Math.round(completion.completed / completion.total * 100) : 0
   const draftRespondedById = resolvedRespondedById || user?.id || currentAudit?.auditor_id || ''
   const draftStorageKey = useMemo(() => auditDraftStorageKey(auditId), [auditId])
-  const draftAuditReference = currentAudit?.auditNumber || currentAudit?.auditId || auditId
-  const draftPayload = useMemo(() => buildDraftPayload(items, auditId, draftAuditReference, draftRespondedById), [items, auditId, draftAuditReference, draftRespondedById])
+  const draftPayload = useMemo(() => buildDraftPayload(items, auditId, responseAuditId, draftRespondedById), [items, auditId, responseAuditId, draftRespondedById])
   const draftSignature = useMemo(() => JSON.stringify(draftPayload), [draftPayload])
   const currentDqLabel = activeGroup?.code || 'DQ'
   const currentDqTotalLabel = `DQ${String(dqGroups.length || 0).padStart(3, '0')}`
@@ -752,6 +1025,9 @@ export default function ConductAudit() {
   const overallProgress = progress
 
   async function persistDraftResponses(showToast = false) {
+    const latestItems = latestItemsRef.current.length ? latestItemsRef.current : items
+    const latestDraftPayload = buildDraftPayload(latestItems, auditId, responseAuditId, draftRespondedById)
+    const latestDraftSignature = JSON.stringify(latestDraftPayload)
     if (isReadOnly) {
       setError('Read-only users cannot save audit drafts.')
       return false
@@ -764,7 +1040,7 @@ export default function ConductAudit() {
       setError('Audit draft is still loading. Please try again in a moment.')
       return false
     }
-    if (!draftPayload.length) {
+    if (!latestDraftPayload.length) {
       setError('Nothing to save yet.')
       return false
     }
@@ -780,20 +1056,18 @@ export default function ConductAudit() {
     setDraftSaving(true)
     try {
       const client = requireSupabase()
-      console.log('Save Draft payload', draftPayload)
+      console.log('Save Draft payload', latestDraftPayload)
       logAuditSaveContext({
-        operation: 'upsert',
+        operation: 'rpc',
         table: 'audit_responses',
         user,
         auditId,
         auditLocation: currentAuditLocation,
         auditDepartments: currentAuditDepartments || [],
-        payload: draftPayload,
+        payload: latestDraftPayload,
       })
       const { data: savedRows, error: saveError } = await client
-        .from('audit_responses')
-        .upsert(draftPayload, { onConflict: 'audit_uuid,checklist_id' })
-        .select('id, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_mobile, action_status')
+        .rpc('upsert_audit_responses', { p_rows: latestDraftPayload })
       if (saveError) throw saveError
       ;(savedRows || [])
         .filter(row => row.assigned_pic_user_id || row.pic_for_ng_user_id || row.pic_for_ng_mobile)
@@ -806,27 +1080,34 @@ export default function ConductAudit() {
             action_status: row.action_status || '',
           })
         })
-      lastDraftSignatureRef.current = draftSignature
+      lastDraftSignatureRef.current = latestDraftSignature
       if (draftStorageKey) localStorage.removeItem(draftStorageKey)
       if (showToast) {
         setDraftMessage('Draft saved')
         window.setTimeout(() => setDraftMessage(''), 1600)
+      }
+      if (showToast && validationBlockedRef.current) {
+        validationBlockedRef.current = false
+        console.info('[ConductAudit] validationBlockedRef cleared by manual save success', {
+          auditId,
+          activeDqCode,
+        })
       }
       lastDraftErrorRef.current = ''
       return true
     } catch (saveError) {
       console.log('Save Draft error', saveError)
       logAuditSaveContext({
-        operation: 'upsert',
+        operation: 'rpc',
         table: 'audit_responses',
         user,
         auditId,
         auditLocation: currentAuditLocation,
         auditDepartments: currentAuditDepartments || [],
-        payload: draftPayload,
+        payload: latestDraftPayload,
         error: saveError,
       })
-      if (draftStorageKey) localStorage.setItem(draftStorageKey, JSON.stringify({ rows: draftPayload, updatedAt: new Date().toISOString() }))
+      if (draftStorageKey) localStorage.setItem(draftStorageKey, JSON.stringify({ rows: latestDraftPayload, updatedAt: new Date().toISOString() }))
       lastDraftErrorRef.current = describeSupabaseError(saveError)
       setError(lastDraftErrorRef.current)
       return false
@@ -872,7 +1153,7 @@ export default function ConductAudit() {
 
   function updateItem(dbId, updates) {
     if (isReadOnly) return
-    setItems(current => current.map(item => (item.dbId === dbId ? { ...item, ...updates } : item)))
+    safeSetItems(`update-item:${dbId}`, current => current.map(item => (item.dbId === dbId ? { ...item, ...updates } : item)))
     setError('')
   }
 
@@ -880,6 +1161,14 @@ export default function ConductAudit() {
     if (isReadOnly) return
     const current = items.find(item => item.dbId === dbId)
     if (!current) return
+    if (validationBlockedRef.current) {
+      validationBlockedRef.current = false
+      console.info('[ConductAudit] validationBlockedRef cleared by answer click', {
+        dbId,
+        dqCode: current.id || current.dqQuestionNum || activeDqCode,
+        nextResult: result,
+      })
+    }
     updateItem(dbId, {
       result,
       remarks: result === 'NA' ? '' : current.remarks || '',
@@ -896,31 +1185,36 @@ export default function ConductAudit() {
     if (firstItem) setActiveId(firstItem.dbId)
   }
 
-  function proceedToDq(code) {
-    if (!code) return
-    openDqGroup(code)
-    setPendingDialog(null)
-  }
-
   async function handleNextDq() {
     if (isReadOnly) {
       setError('Read-only users cannot move audit workflow to the next DQ.')
-      return
+      return false
     }
     console.log('Next DQ clicked')
     if (currentDqIndex < 0) {
       setError('Unable to determine current DQ.')
-      return
+      return false
     }
 
     if (currentDqIndex >= dqGroups.length - 1) {
       setError('This is the last DQ.')
       openReview()
-      return
+      return true
+    }
+
+    const currentDqItems = sortDqItems(items.filter(item => getItemDqCode(item) === currentDqCode))
+    if (!currentDqItems.length) {
+      validationBlockedRef.current = true
+      setError(`Unable to validate ${currentDqCode || 'current DQ'} because no checklist rows were found.`)
+      setPendingDialog({
+        nextCode: dqGroups[currentDqIndex + 1].code,
+        pendingItems: [],
+      })
+      return false
     }
 
     const nextCode = dqGroups[currentDqIndex + 1].code
-    const pendingItems = dqItems
+    const pendingItems = currentDqItems
       .map((item, index) => ({ item, index, reasons: getPendingReasons(item) }))
       .filter(entry => entry.reasons.length)
     const pendingList = pendingItems.map(entry => ({
@@ -931,23 +1225,37 @@ export default function ConductAudit() {
     }))
 
     if (pendingItems.length) {
+      validationBlockedRef.current = true
+      console.info('[ConductAudit] validation failed, blocking checklist rebuild and draft hydration', {
+        activeDqCode: currentDqCode,
+        nextCode,
+        totalCurrentDqItems: currentDqItems.length,
+        pendingCount: pendingItems.length,
+        pendingItems: pendingList.map(entry => ({
+          dbId: entry.item.dbId,
+          dqCode: getItemDqCode(entry.item),
+          result: entry.item.result || '',
+          reasons: entry.reasons,
+        })),
+      })
       console.log('Validation pending', pendingList)
-      const pendingMessage = formatPendingListMessage(pendingList, activeGroup?.code || selectedDqFromUrl || dqItems[0]?.dqQuestionNum || '')
+      const pendingMessage = formatPendingListMessage(pendingList, currentDqCode || currentDqItems[0]?.dqQuestionNum || '')
       setError(pendingMessage)
       setPendingDialog({
         nextCode,
         pendingItems: pendingList,
       })
-      return
+      return false
     }
 
     console.log('Next DQ target', nextCode)
     const saveResult = await persistDraftResponses(false)
     if (!saveResult) {
       setError(lastDraftErrorRef.current || 'Unable to save draft before moving to next DQ.')
-      return
+      return false
     }
     openDqGroup(nextCode)
+    return true
   }
 
   function openReview() {
@@ -975,7 +1283,6 @@ export default function ConductAudit() {
     if (!completion.ready) {
       if (completion.pending) issues.push(`${completion.pending} unanswered questions`)
       if (completion.ngMissingCondition) issues.push(`${completion.ngMissingCondition} NG findings without current condition`)
-      if (completion.capaPending) issues.push(`${completion.capaPending} improvement actions pending`)
       setError(`Audit cannot be submitted: ${issues.join(', ')}.`)
       return
     }
@@ -1010,10 +1317,7 @@ export default function ConductAudit() {
     setDeleteMessage('')
     try {
       const client = requireSupabase()
-      let responseDelete = await client.from('audit_responses').delete().eq('audit_uuid', auditId)
-      if (responseDelete.error && /column .* does not exist/i.test(responseDelete.error.message || '')) {
-        responseDelete = await client.from('audit_responses').delete().eq('audit_id', auditId)
-      }
+      let responseDelete = await client.from('audit_responses').delete().eq('audit_id', responseAuditId)
       if (responseDelete.error) throw responseDelete.error
       const { error: capaError } = await deleteCapasByAudit(auditId)
       if (capaError) throw capaError
@@ -1080,6 +1384,7 @@ export default function ConductAudit() {
     return <div className="audit-execution-page audit-evaluation-page">
       <section className="card audit-empty-card">
         <strong>No checklist items found for this audit.</strong>
+        {routeAuditError && <span>{routeAuditError}</span>}
         {checklistError && <span>{checklistError}</span>}
       </section>
     </div>
@@ -1127,12 +1432,12 @@ export default function ConductAudit() {
         </div>
       </div>
       <div className="audit-progress-header-actions">
-        {!isReadOnly && <button className="secondary-button audit-header-action" disabled={draftSaving} onClick={() => persistDraftResponses(true)}><Save size={16} /> Save draft</button>}
-        <button className="secondary-button audit-header-action" disabled={currentDqIndex <= 0} onClick={() => currentDqIndex > 0 && openDqGroup(dqGroups[currentDqIndex - 1].code)}><ChevronLeft size={16} /> Previous DQ</button>
+        {!isReadOnly && <button type="button" className="secondary-button audit-header-action" disabled={draftSaving} onClick={() => persistDraftResponses(true)}><Save size={16} /> Save draft</button>}
+        <button type="button" className="secondary-button audit-header-action" disabled={currentDqIndex <= 0} onClick={() => currentDqIndex > 0 && openDqGroup(dqGroups[currentDqIndex - 1].code)}><ChevronLeft size={16} /> Previous DQ</button>
         {!isReadOnly && (currentDqIndex >= 0 && currentDqIndex < dqGroups.length - 1 ? (
-          <button className="primary-button audit-header-action audit-header-next" onClick={handleNextDq}>Next DQ</button>
+          <button type="button" className="primary-button audit-header-action audit-header-next" onClick={event => { event.preventDefault(); void handleNextDq() }}>Next DQ</button>
         ) : (
-          <button className="primary-button audit-header-action audit-header-next" onClick={openReview}>Review Audit</button>
+          <button type="button" className="primary-button audit-header-action audit-header-next" onClick={openReview}>Review Audit</button>
         ))}
       </div>
     </header>
@@ -1247,20 +1552,20 @@ export default function ConductAudit() {
       </div>
       {error && <div className="audit-submission-error" role="alert"><AlertCircle size={20} /><span>{error}</span></div>}
       <div className="audit-footer-actions">
-        {!isReadOnly && <button className="secondary-button" disabled={draftSaving} onClick={() => persistDraftResponses(true)}><Save size={18} /> Save draft</button>}
+        {!isReadOnly && <button type="button" className="secondary-button" disabled={draftSaving} onClick={() => persistDraftResponses(true)}><Save size={18} /> Save draft</button>}
         {!isReviewMode ? (
           <>
-            <button className="secondary-button" disabled={currentDqIndex <= 0} onClick={() => currentDqIndex > 0 && openDqGroup(dqGroups[currentDqIndex - 1].code)}><ChevronLeft size={18} /> Previous DQ</button>
+            <button type="button" className="secondary-button" disabled={currentDqIndex <= 0} onClick={() => currentDqIndex > 0 && openDqGroup(dqGroups[currentDqIndex - 1].code)}><ChevronLeft size={18} /> Previous DQ</button>
             {!isReadOnly && (currentDqIndex >= 0 && currentDqIndex < dqGroups.length - 1 ? (
-              <button className="primary-button" onClick={handleNextDq}>Next DQ</button>
+              <button type="button" className="primary-button" onClick={event => { event.preventDefault(); void handleNextDq() }}>Next DQ</button>
             ) : (
-              <button className="primary-button" onClick={openReview}>Review Audit</button>
+              <button type="button" className="primary-button" onClick={openReview}>Review Audit</button>
             ))}
           </>
         ) : (
           <>
-            <button className="secondary-button" onClick={() => backToAudit(dqGroups[dqGroups.length - 1]?.code)}><ChevronLeft size={18} /> Back to Audit</button>
-            {!isReadOnly && <button className="primary-button" disabled={!completion.ready} onClick={handleSubmit}><Send size={18} /> Submit Audit</button>}
+            <button type="button" className="secondary-button" onClick={() => backToAudit(dqGroups[dqGroups.length - 1]?.code)}><ChevronLeft size={18} /> Back to Audit</button>
+            {!isReadOnly && <button type="button" className="primary-button" disabled={!completion.ready} onClick={handleSubmit}><Send size={18} /> Submit Audit</button>}
           </>
         )}
       </div>
@@ -1284,8 +1589,7 @@ export default function ConductAudit() {
           ))}
         </div>
         <div className="audit-dialog-actions">
-          <button className="secondary-button" onClick={() => setPendingDialog(null)}>Stay here</button>
-          <button className="primary-button" onClick={() => proceedToDq(pendingDialog.nextCode)}>Continue</button>
+          <button type="button" className="primary-button" onClick={() => setPendingDialog(null)}>OK</button>
         </div>
       </div>
     </div>}

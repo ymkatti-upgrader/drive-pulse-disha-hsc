@@ -3,15 +3,87 @@ import { requireSupabase, supabase } from '../supabaseClient'
 
 const AUTH_KEY = 'current_user'
 const LEGACY_AUTH_KEY = 'disha-hsc-auth'
+const SIT_MODE_KEY = 'disha-hsc-sit-role'
 const SUPER_ADMIN_MOBILE_NO = '9964214342'
+const SIT_MODE_ENABLED = import.meta.env.VITE_ENABLE_SIT_MODE !== 'false'
 const SESSION_STORAGE_KEYS = [
   AUTH_KEY,
   LEGACY_AUTH_KEY,
+  SIT_MODE_KEY,
   'disha-hsc-notification-reads',
   'disha-hsc-audit-creation-draft',
 ]
 const SESSION_STORAGE_PREFIXES = ['disha-hsc-audit-draft:']
 export const DEFAULT_PASSWORD = 'Welcome@123'
+
+export const sitRoleOptions = [
+  {
+    key: 'auditor',
+    label: 'Auditor',
+    role: 'Auditor',
+    userType: 'Auditor',
+    persona: {
+      id: 'a5e1b964-94f4-49b8-a320-ef66683ef03c',
+      employee_name: 'RAJANISH',
+      mobile_no: '8147821716',
+    },
+  },
+  {
+    key: 'assigned-pic',
+    label: 'Assigned PIC',
+    role: 'Location Functional HOD',
+    userType: 'Assigned PIC',
+    persona: {
+      id: '82838961-ea6a-4319-adb1-a481c800fcf4',
+      employee_name: 'SASI KUMAR',
+      mobile_no: '9008999499',
+    },
+  },
+  {
+    key: 'group-disha',
+    label: 'Group DISHA HSC PIC',
+    role: 'Group DISHA HSC PIC',
+    userType: 'Group DISHA HSC PIC',
+    persona: {
+      id: 'e2147812-007c-4d44-a16b-b6f85e4ccfe2',
+      employee_name: 'ARUNA',
+      mobile_no: '9900027554',
+    },
+  },
+  {
+    key: 'ceo',
+    label: 'CEO',
+    role: 'CEO',
+    userType: 'CEO',
+    persona: {
+      id: '54d0eeea-7705-46d6-83d6-61fa1cb061bb',
+      employee_name: 'S Ramkumar',
+      mobile_no: '9900035319',
+    },
+  },
+  {
+    key: 'branch-disha',
+    label: 'Branch DISHA PIC',
+    role: 'Branch DISHA PIC',
+    userType: 'Branch DISHA PIC',
+    persona: {
+      id: 'a5e1b964-94f4-49b8-a320-ef66683ef03c',
+      employee_name: 'RAJANISH',
+      mobile_no: '8147821716',
+    },
+  },
+  {
+    key: 'viewer',
+    label: 'Viewer',
+    role: 'Viewer',
+    userType: 'Viewer',
+    persona: {
+      id: 'sit-viewer',
+      employee_name: 'SIT Viewer',
+      mobile_no: '0000000000',
+    },
+  },
+]
 
 export const mockRoles = [
   'CEO',
@@ -49,6 +121,14 @@ function readJson(key, fallback) {
 
 function readStoredUser() {
   return readJson(AUTH_KEY, null) || readJson(LEGACY_AUTH_KEY, null)
+}
+
+function readSitRoleKey() {
+  try {
+    return localStorage.getItem(SIT_MODE_KEY) || ''
+  } catch {
+    return ''
+  }
 }
 
 function clearSessionStorage() {
@@ -173,6 +253,65 @@ function normalizeImportRow(row) {
 const AUTH_USER_SELECT = 'id, employee_name, mobile_no, password, password_hash, must_reset_password, active, account_locked, failed_login_attempts, password_changed_at, last_login_at, created_at, updated_at'
 const LEGACY_AUTH_USER_SELECT = 'id, employee_name, mobile_no, password, active, created_at, updated_at'
 
+function maskDiagnosticMobile(value) {
+  const text = String(value || '')
+  if (!text) return ''
+  return `${'*'.repeat(Math.max(0, text.length - 4))}${text.slice(-4)}`
+}
+
+function getLoginSupabaseDiagnostics() {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || ''
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+
+  return {
+    VITE_SUPABASE_URL: supabaseUrl || '(missing)',
+    anonKeyExists: Boolean(anonKey),
+    anonKeyLength: anonKey.length,
+  }
+}
+
+function logAppUsersQueryDiagnostic(stage, { enteredMobile, result, selectColumns }) {
+  const error = result?.error || null
+  const request = {
+    table: 'app_users',
+    select: selectColumns,
+    filters: [
+      {
+        column: 'mobile_no',
+        operator: 'eq',
+        valueMasked: maskDiagnosticMobile(enteredMobile),
+        valueLength: String(enteredMobile || '').length,
+      },
+    ],
+    maybeSingle: true,
+  }
+
+  console.info('[Login diagnostics] app_users query', {
+    stage,
+    env: getLoginSupabaseDiagnostics(),
+    request,
+    table: 'app_users',
+    httpStatus: result?.status ?? error?.status ?? null,
+    statusText: result?.statusText ?? error?.statusText ?? null,
+    errorCode: error?.code ?? null,
+    errorMessage: error?.message ?? null,
+  })
+
+  if (error) {
+    console.error('[Login diagnostics] app_users query error', {
+      stage,
+      table: 'app_users',
+      httpStatus: result?.status ?? error?.status ?? null,
+      statusText: result?.statusText ?? error?.statusText ?? null,
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      fullError: error,
+    })
+  }
+}
+
 export function validatePassword(value) {
   const checks = passwordRules.map(rule => ({ ...rule, valid: rule.test(value) }))
   return { checks, valid: checks.every(rule => rule.valid) }
@@ -270,6 +409,36 @@ export function isLocationFunctionalHod(user) {
 
 export function isViewer(user) {
   return matchesUserAccess(user, ['viewer'])
+}
+
+function buildSitModeUser(baseUser, sitRoleKey) {
+  if (!SIT_MODE_ENABLED || !baseUser || !isSuperAdmin(baseUser) || !sitRoleKey) return baseUser
+
+  const option = sitRoleOptions.find(item => item.key === sitRoleKey)
+  if (!option) return baseUser
+
+  const persona = option.persona || {}
+  return {
+    ...baseUser,
+    id: persona.id || baseUser.id,
+    employee_name: persona.employee_name || baseUser.employee_name,
+    mobile_no: persona.mobile_no || baseUser.mobile_no,
+    role: option.role,
+    user_type: option.userType,
+    access: [{
+      role: option.role,
+      department: 'All',
+      location: 'All',
+      user_type: option.userType,
+    }],
+    must_reset_password: false,
+    must_change_password: false,
+    __sitMode: true,
+    __sitRoleKey: option.key,
+    __sitRoleLabel: option.label,
+    __realUserId: baseUser.id,
+    __realUserMobileNo: baseUser.mobile_no,
+  }
 }
 
 export function getAccessScopeValues(user, key) {
@@ -439,6 +608,8 @@ export function filterByUserAccess(user, rows, getScope) {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(readStoredUser)
   const [users, setUsers] = useState([])
+  const [sitRoleKey, setSitRoleKey] = useState(readSitRoleKey)
+  const effectiveUser = useMemo(() => buildSitModeUser(user, sitRoleKey), [user, sitRoleKey])
 
   // Cached sessions can carry a must_reset_password value that predates a
   // later admin/DB correction. Revalidate it against the backend on
@@ -490,30 +661,74 @@ export function AuthProvider({ children }) {
   }
 
   const value = useMemo(() => ({
-    user,
+    user: effectiveUser,
+    actualUser: user,
     users: users.map(sanitizeUser),
     passwordRules,
     isAuthenticated: Boolean(user),
+    sitModeEnabled: SIT_MODE_ENABLED,
+    sitModeAvailable: SIT_MODE_ENABLED && isSuperAdmin(user),
+    sitRoleKey,
+    sitRoleOptions,
+    setSitRole(nextRoleKey) {
+      if (!SIT_MODE_ENABLED || !isSuperAdmin(user)) return
+      const normalizedRoleKey = String(nextRoleKey || '')
+      if (normalizedRoleKey && !sitRoleOptions.some(option => option.key === normalizedRoleKey)) return
+      if (normalizedRoleKey) localStorage.setItem(SIT_MODE_KEY, normalizedRoleKey)
+      else localStorage.removeItem(SIT_MODE_KEY)
+      setSitRoleKey(normalizedRoleKey)
+    },
+    clearSitRole() {
+      localStorage.removeItem(SIT_MODE_KEY)
+      setSitRoleKey('')
+    },
     async login(mobile, password) {
       try {
         const client = requireSupabase()
         const enteredMobile = normalizeMobile(mobile)
         const enteredPassword = String(password).trim()
 
+        logAppUsersQueryDiagnostic('before primary app_users read', {
+          enteredMobile,
+          selectColumns: AUTH_USER_SELECT,
+        })
         let userResult = await client
           .from('app_users')
           .select(AUTH_USER_SELECT)
           .eq('mobile_no', enteredMobile)
           .maybeSingle()
+        if (userResult.error) {
+          logAppUsersQueryDiagnostic('primary app_users read error', {
+            enteredMobile,
+            result: userResult,
+            selectColumns: AUTH_USER_SELECT,
+          })
+        }
         if (userResult.error && /column .* does not exist/i.test(userResult.error.message || '')) {
+          logAppUsersQueryDiagnostic('before legacy app_users read', {
+            enteredMobile,
+            selectColumns: LEGACY_AUTH_USER_SELECT,
+          })
           userResult = await client
             .from('app_users')
             .select(LEGACY_AUTH_USER_SELECT)
             .eq('mobile_no', enteredMobile)
             .maybeSingle()
+          if (userResult.error) {
+            logAppUsersQueryDiagnostic('legacy app_users read error', {
+              enteredMobile,
+              result: userResult,
+              selectColumns: LEGACY_AUTH_USER_SELECT,
+            })
+          }
         }
         const { data: matchedUser, error: userError } = userResult
         if (userError) {
+          logAppUsersQueryDiagnostic('final app_users lookup failure', {
+            enteredMobile,
+            result: userResult,
+            selectColumns: userResult.error && /column .* does not exist/i.test(userResult.error.message || '') ? LEGACY_AUTH_USER_SELECT : AUTH_USER_SELECT,
+          })
           console.error('Supabase user lookup failed', userError)
           return { ok: false, error: 'Unable to read backend users. Please contact Super Admin.' }
         }
@@ -567,6 +782,8 @@ export function AuthProvider({ children }) {
           account_locked: false,
         }, mappings || [])
         const safeUser = persistSession(sessionUser)
+        localStorage.removeItem(SIT_MODE_KEY)
+        setSitRoleKey('')
         return {
           ok: true,
           user: safeUser,
@@ -765,10 +982,11 @@ export function AuthProvider({ children }) {
         console.error('Supabase sign out failed', error)
       } finally {
         clearSessionStorage()
+        setSitRoleKey('')
         setUser(null)
       }
     },
-  }), [user, users])
+  }), [effectiveUser, sitRoleKey, user, users])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

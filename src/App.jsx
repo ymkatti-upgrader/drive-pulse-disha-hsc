@@ -14,7 +14,7 @@ import MasterImport from './pages/MasterImport'
 import YokotenLibrary from './pages/YokotenLibrary'
 import ActionCenter from './pages/ActionCenter'
 import ProtectedRoute, { FeatureRouteGuard } from './auth/ProtectedRoute'
-import { isSuperAdmin, useAuth } from './auth/AuthContext'
+import { canViewAuditModule, isSuperAdmin, useAuth } from './auth/AuthContext'
 
 export default function App() {
   const { isAuthenticated, user } = useAuth()
@@ -27,7 +27,7 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/audits/new" element={<FeatureRouteGuard feature="audit-workbench"><AuditCreation /></FeatureRouteGuard>} />
-        <Route path="/audits/:id/conduct" element={<FeatureRouteGuard feature="conduct-audit"><ConductAudit /></FeatureRouteGuard>} />
+        <Route path="/audits/:id/conduct" element={<AuditModuleOnly><ConductAudit /></AuditModuleOnly>} />
         <Route path="/improvements" element={<Navigate to="/action-center" replace />} />
         <Route path="/improvements/:id" element={<Navigate to="/action-center" replace />} />
         <Route path="/capa" element={<Navigate to="/action-center" replace />} />
@@ -50,4 +50,9 @@ export default function App() {
 function AdminOnly({ children }) {
   const { user } = useAuth()
   return isSuperAdmin(user) ? children : <Navigate to="/dashboard" replace />
+}
+
+function AuditModuleOnly({ children }) {
+  const { user } = useAuth()
+  return canViewAuditModule(user) ? children : <Navigate to="/dashboard" replace />
 }

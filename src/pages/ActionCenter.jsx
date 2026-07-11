@@ -174,8 +174,8 @@ function expenseStatus(row = {}) {
   const text = cleanText(row.expense_approval_status)
   if (text && !['Pending Approval', 'Pending CEO Approval', 'Pending Group Disha HSC PIC Approval', 'Pending Group DISHA Review'].includes(text)) return text
 
-  const groupStatus = cleanText(row.group_disha_review_status || row.group_disha_approval_status)
-  const ceoStatus = cleanText(row.ceo_review_status || row.ceo_approval_status)
+  const groupStatus = normalizeText(row.group_disha_review_status || row.group_disha_approval_status)
+  const ceoStatus = normalizeText(row.ceo_review_status || row.ceo_approval_status)
 
   if (!row.monetary_support_required && !row.expense_approval_required) return 'Not Required'
   if (ceoStatus === 'approved') return 'CEO Approved'
@@ -188,7 +188,7 @@ function expenseStatus(row = {}) {
 }
 
 function groupDishaApprovalStatus(row = {}) {
-  const text = cleanText(row.group_disha_review_status || row.group_disha_approval_status)
+  const text = normalizeText(row.group_disha_review_status || row.group_disha_approval_status)
   if (text === 'approved') return 'Approved by Group DISHA'
   if (text === 'rejected by group disha' || text === 'rejected') return 'Rejected by Group DISHA'
   if (text === 'resubmitted for group review' || text === 'resubmitted') return 'Resubmitted for Group DISHA Review'
@@ -197,14 +197,14 @@ function groupDishaApprovalStatus(row = {}) {
 }
 
 function ceoApprovalStatus(row = {}) {
-  const text = cleanText(row.ceo_review_status || row.ceo_approval_status)
+  const text = normalizeText(row.ceo_review_status || row.ceo_approval_status)
   if (text === 'approved') return 'CEO Approved'
   if (text === 'rejected by ceo' || text === 'rejected') return 'CEO Rejected'
   if (text === 'pending ceo approval' || text === 'pending') return 'Pending CEO Approval'
   if (text === 'resubmitted for ceo approval' || text === 'resubmitted') return 'Resubmitted for CEO Approval'
   if (!row.monetary_support_required && !row.expense_approval_required) return 'Not Required'
-  if (cleanText(row.group_disha_review_status || row.group_disha_approval_status) === 'rejected by group disha') return 'Not Required'
-  if (cleanText(row.group_disha_review_status || row.group_disha_approval_status) === 'approved') return 'Pending CEO Approval'
+  if (normalizeText(row.group_disha_review_status || row.group_disha_approval_status) === 'rejected by group disha') return 'Not Required'
+  if (normalizeText(row.group_disha_review_status || row.group_disha_approval_status) === 'approved') return 'Pending CEO Approval'
   return 'Not Required'
 }
 
@@ -414,7 +414,7 @@ function isValidNgAction(item, audit = {}) {
   const hasWorkflowStatus = normalizeText(item.result) === 'ng' || hasMeaningfulValue(item.action_status) || hasMeaningfulValue(item.status)
   const hasQuestion = Boolean(resolveActionQuestion(item)) || hasMeaningfulValue(item.checklist_id) || hasMeaningfulValue(item.dq_question_num) || hasMeaningfulValue(item.sub_question_num)
   const hasPicAssignment = hasAssignedPic(item)
-  const hasAuditId = hasMeaningfulValue(item.audit_uuid || item.audit_id)
+  const hasAuditId = Boolean(cleanText(item.audit_uuid || item.audit_id))
   return hasWorkflowStatus && hasQuestion && hasPicAssignment && hasAuditId
 }
 
@@ -517,6 +517,7 @@ export default function ActionCenter() {
   const { user } = useAuth()
   const { audits } = useAudits()
   const roleProfile = useMemo(() => getRoleProfile(user), [user])
+  const assignedOnlyOwnerView = roleProfile.id === 'location-functional-hod'
   const [activeTab, setActiveTab] = useState('assigned')
   const [ngItems, setNgItems] = useState([])
   const [people, setPeople] = useState([])
@@ -544,7 +545,11 @@ export default function ActionCenter() {
   }, [audits])
 
   function canActOnExpense(item) {
-    const overallStatus = expenseStatus(item)
+    // `item` here is a mapped hubCard (camelCase fields), not a raw DB row —
+    // use its already-computed expenseApprovalStatus rather than re-deriving
+    // via expenseStatus(), which reads snake_case DB column names and would
+    // silently fall through to 'Not Required' on a camelCase object.
+    const overallStatus = item.expenseApprovalStatus
     if (!item.monetarySupportRequired || ['CEO Approved', 'Not Required'].includes(overallStatus)) return false
     if (['Pending CEO Approval', 'Resubmitted for CEO Approval'].includes(item.ceoApprovalStatus || overallStatus)) {
       return isSystemAdmin(currentUser) || hasRole(currentUser, ['ceo'])
@@ -636,7 +641,7 @@ export default function ActionCenter() {
             action_status: row.action_status,
             is_void: row.is_void,
           })))
-          setNgItems(validRows)
+          setNgItems(assignedOnlyOwnerView ? assignedRows : validRows)
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -650,7 +655,7 @@ export default function ActionCenter() {
 
     loadNgItems()
     return () => { cancelled = true }
-  }, [adminView, auditorView, reviewerView, expenseApproverView, user, currentUser, refreshKey, auditLookup])
+  }, [adminView, auditorView, reviewerView, expenseApproverView, user, currentUser, refreshKey, auditLookup, assignedOnlyOwnerView])
 
   const hubCards = useMemo(() => ngItems.map(item => {
     const audit = auditLookup.get(item.audit_uuid || item.audit_id) || {}

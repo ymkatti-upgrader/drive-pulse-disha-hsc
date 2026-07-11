@@ -101,6 +101,8 @@ BEFORE INSERT OR UPDATE ON audits
 FOR EACH ROW
 EXECUTE FUNCTION sync_and_protect_audit_number();
 
+DROP FUNCTION IF EXISTS create_audit_with_number(text, uuid, uuid, uuid, date, uuid, audit_status);
+
 CREATE OR REPLACE FUNCTION create_audit_with_number(
   p_title text,
   p_location_id uuid,
@@ -110,7 +112,7 @@ CREATE OR REPLACE FUNCTION create_audit_with_number(
   p_created_by uuid,
   p_status audit_status DEFAULT 'scheduled'
 )
-RETURNS audits
+RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
@@ -141,7 +143,7 @@ BEGIN
   )
   RETURNING * INTO inserted_row;
 
-  RETURN inserted_row;
+  RETURN to_jsonb(inserted_row);
 END;
 $$;
 

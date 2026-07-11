@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { requireSupabase } from '../supabaseClient'
+import { checklistRowOrderValue, checklistRowSerialValue } from './checklistSort'
 
 function priorityFromRisk(row) {
   if (row.risk_level === 'Critical') return 'Critical'
@@ -14,20 +15,6 @@ function weightFromPriority(priority) {
 
 function scoreGroupFromClassification(value) {
   return String(value || '').toLowerCase().includes('process') ? 'Process' : 'Result'
-}
-
-function normalizeSerialValue(row) {
-  const direct = Number(row.sub_question_num ?? row.subQuestionNum ?? row.serial_no ?? row.sequence)
-  if (Number.isFinite(direct) && direct > 0) return direct
-
-  const versionMatch = String(row.version || '').match(/^v\d+-[A-Z0-9]+-(\d{3})(?:-|$)/i)
-  const versionSerial = versionMatch ? Number(versionMatch[1]) : Number.NaN
-  if (Number.isFinite(versionSerial) && versionSerial > 0) return versionSerial
-
-  const source = String(row.evaluation_question || row.question || row.evaluation_parameter || row.version || '').trim()
-  const match = source.match(/^\s*(\d+(?:\.\d+)?)/)
-  const parsed = match ? Number(match[1]) : Number.NaN
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : Number.POSITIVE_INFINITY
 }
 
 function checklistCodeSortValue(value) {
@@ -48,13 +35,15 @@ function stripLeadingSerial(text) {
 
 function mapChecklistRow(row) {
   const priority = priorityFromRisk(row)
-  const subQuestionNum = normalizeSerialValue(row)
+  const rowOrder = checklistRowOrderValue(row)
+  const subQuestionNum = checklistRowSerialValue(row)
   const question = stripLeadingSerial(row.evaluation_question || row.question || row.evaluation_parameter || '')
   return {
     id: row.checklist_code,
     dbId: row.id,
     dqQuestionNum: row.checklist_code || '',
     dqSort: checklistCodeSortValue(row.checklist_code),
+    rowOrder,
     subQuestionNum,
     subQuestionOrder: subQuestionOrderFromVersion(row.version),
     createdAt: row.created_at || '',
@@ -99,7 +88,7 @@ export function useAuditChecklist() {
         const client = requireSupabase()
         const result = await client
           .from('audit_checklist_master')
-          .select('id, checklist_code, sub_question_num, version, created_at, section, area, chapter, classification, applicable_departments, location_aspect, evaluation_question, evaluation_parameter, guest_experience_impact, facility_type, question, purpose, checking_method, additional_info, sop_reference, evidence_required, status')
+          .select('*')
           .eq('status', 'active')
         if (result.error) throw result.error
         const allRows = result.data || []
@@ -107,7 +96,9 @@ export function useAuditChecklist() {
         const rowsToUse = workbookOrderedRows.length ? workbookOrderedRows : allRows
         const nextChecklist = rowsToUse.map(mapChecklistRow).sort((a, b) => {
           if (a.dqSort !== b.dqSort) return a.dqSort - b.dqSort
-          if (a.id !== b.id) return String(a.id).localeCompare(String(b.id))
+          const aRowOrder = Number.isFinite(a.rowOrder) ? a.rowOrder : Number.POSITIVE_INFINITY
+          const bRowOrder = Number.isFinite(b.rowOrder) ? b.rowOrder : Number.POSITIVE_INFINITY
+          if (aRowOrder !== bRowOrder) return aRowOrder - bRowOrder
           const aSerial = Number.isFinite(a.subQuestionNum) ? a.subQuestionNum : Number.POSITIVE_INFINITY
           const bSerial = Number.isFinite(b.subQuestionNum) ? b.subQuestionNum : Number.POSITIVE_INFINITY
           if (aSerial !== bSerial) return aSerial - bSerial
@@ -117,6 +108,7 @@ export function useAuditChecklist() {
           const aCreated = a.createdAt || ''
           const bCreated = b.createdAt || ''
           if (aCreated !== bCreated) return String(aCreated).localeCompare(String(bCreated))
+          if (a.id !== b.id) return String(a.id).localeCompare(String(b.id))
           return String(a.dbId).localeCompare(String(b.dbId))
         }).reduce((acc, item) => {
           acc.push({

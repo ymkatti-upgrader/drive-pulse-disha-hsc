@@ -67,14 +67,12 @@ export default function AuditCreation() {
   const canEditAudit = canAccessAuditModule(user) || isSystemAdmin(user)
   const [auditorOptions, setAuditorOptions] = useState([])
   const [locationOptions, setLocationOptions] = useState([])
-  const [departmentOptions, setDepartmentOptions] = useState([])
   const [validationError, setValidationError] = useState('')
   const [savingAudit, setSavingAudit] = useState(false)
   const [auditId, setAuditId] = useState('')
   const [search, setSearch] = useState('')
   const [form, setForm] = useState({
     locationId: '',
-    departmentId: '',
     auditorId: '',
     startDate: new Date().toISOString().slice(0, 10),
   })
@@ -86,7 +84,6 @@ export default function AuditCreation() {
       if (stored.auditId && isUuid(stored.auditId)) setAuditId(stored.auditId)
       setForm(current => ({
         locationId: stored.locationId || current.locationId,
-        departmentId: stored.departmentId || current.departmentId,
         auditorId: stored.auditorId || current.auditorId,
         startDate: stored.startDate || current.startDate,
       }))
@@ -101,16 +98,14 @@ export default function AuditCreation() {
     async function loadAuditors() {
       try {
         const client = requireSupabase()
-        const [usersResult, mappingsResult, locationsResult, departmentsResult] = await Promise.all([
+        const [usersResult, mappingsResult, locationsResult] = await Promise.all([
           client.from('app_users').select('id, employee_name, mobile_no, active'),
           client.from('user_access_mappings').select('user_id, role, department, location, user_type, active').eq('active', true),
           client.from('locations').select('id, code, name, visibility').order('code', { ascending: true }),
-          client.from('departments').select('id, name, status').order('name', { ascending: true }),
         ])
         if (usersResult.error) throw usersResult.error
         if (mappingsResult.error) throw mappingsResult.error
         if (locationsResult.error) throw locationsResult.error
-        if (departmentsResult.error) throw departmentsResult.error
 
         const mappingsByUser = new Map()
         for (const mapping of mappingsResult.data || []) {
@@ -127,18 +122,11 @@ export default function AuditCreation() {
             label: [item.code, item.name].filter(Boolean).join(' - ') || item.name || item.code || item.id,
             name: item.name || item.code || '',
           })))
-          setDepartmentOptions((departmentsResult.data || []).map(item => ({
-            id: item.id,
-            value: item.id,
-            label: item.name || item.id,
-            name: item.name || '',
-          })))
         }
       } catch (error) {
         if (!cancelled) {
           setAuditorOptions([])
           setLocationOptions([])
-          setDepartmentOptions([])
         }
         console.error('Unable to load auditor options', error)
       }
@@ -159,13 +147,11 @@ export default function AuditCreation() {
 
   const selectedAuditor = auditorOptions.find(option => option.value === form.auditorId) || null
   const selectedLocation = locationOptions.find(option => option.value === form.locationId) || null
-  const selectedDepartment = departmentOptions.find(option => option.value === form.departmentId) || null
 
   async function saveAuditRecord(nextStatus) {
     if (!canEditAudit || savingAudit) return null
     const issues = []
     if (!form.locationId) issues.push('Location is required.')
-    if (!form.departmentId) issues.push('Department is required.')
     if (!form.auditorId) issues.push('Auditor name is required.')
     if (!form.startDate) issues.push('Audit start date is required.')
     if (issues.length) {
@@ -183,7 +169,7 @@ export default function AuditCreation() {
         const { data, error } = await client.rpc('create_audit_with_number', {
           p_title: AUDIT_TYPE,
           p_location_id: form.locationId,
-          p_department_id: form.departmentId,
+          p_department_id: null,
           p_auditor_id: form.auditorId,
           p_scheduled_date: form.startDate,
           p_created_by: user.id,
@@ -197,7 +183,6 @@ export default function AuditCreation() {
           .update({
             title: AUDIT_TYPE,
             location_id: form.locationId,
-            department_id: form.departmentId,
             auditor_id: form.auditorId,
             scheduled_date: form.startDate,
             status: nextStatus === 'In Progress' ? 'in_progress' : 'scheduled',
@@ -214,7 +199,6 @@ export default function AuditCreation() {
       localStorage.setItem(CREATION_DRAFT_KEY, JSON.stringify({
         auditId: nextAuditId,
         locationId: form.locationId,
-        departmentId: form.departmentId,
         auditorId: form.auditorId,
         startDate: form.startDate,
         savedAt: new Date().toISOString(),
@@ -229,9 +213,6 @@ export default function AuditCreation() {
         title: AUDIT_TYPE,
         locationId: form.locationId,
         location: selectedLocation?.name || selectedLocation?.label || '',
-        departmentId: form.departmentId,
-        department: selectedDepartment?.name || selectedDepartment?.label || '',
-        departments: selectedDepartment?.name ? [selectedDepartment.name] : [],
         auditor_id: selectedAuditor?.value || '',
         auditor_name: selectedAuditor?.label || '',
         start_date: form.startDate,
@@ -273,7 +254,6 @@ export default function AuditCreation() {
         item.audit_type,
         item.title,
         item.location,
-        item.department,
       ].some(value => String(value || '').toLowerCase().includes(query)))
       : scopedAudits
   }, [scopedAudits, search])
@@ -297,21 +277,22 @@ export default function AuditCreation() {
         <div className="form-grid">
           <label className="wide">Audit Type<input value={AUDIT_TYPE} readOnly /></label>
           <label className="wide">Location<select value={form.locationId} onChange={event => setForm(current => ({ ...current, locationId: event.target.value }))}><option value="">Select location</option>{locationOptions.map(item => <option key={item.id} value={item.value}>{item.label}</option>)}</select></label>
-          <label className="wide">Department<select value={form.departmentId} onChange={event => setForm(current => ({ ...current, departmentId: event.target.value }))}><option value="">Select department</option>{departmentOptions.map(item => <option key={item.id} value={item.value}>{item.label}</option>)}</select></label>
-          <label className="wide">Auditor Name
-            <div className="input-icon"><UserRound size={17} /><select value={form.auditorId} onChange={event => setForm(current => ({ ...current, auditorId: event.target.value }))}><option value="">Select auditor</option>{auditorOptions.map(item => <option key={item.id} value={item.value}>{item.label}</option>)}</select></div>
+          <label className="wide">Audit Start Date
+            <div className="input-icon audit-creation-icon-field audit-creation-date-field"><Calendar size={17} /><input type="date" value={form.startDate} onChange={event => setForm(current => ({ ...current, startDate: event.target.value }))} /></div>
           </label>
-          <label>Audit Start Date<div className="input-icon"><Calendar size={17} /><input type="date" value={form.startDate} onChange={event => setForm(current => ({ ...current, startDate: event.target.value }))} /></div></label>
+          <label className="wide">Auditor Name
+            <div className="input-icon audit-creation-icon-field"><UserRound size={17} /><select value={form.auditorId} onChange={event => setForm(current => ({ ...current, auditorId: event.target.value }))}><option value="">Select auditor</option>{auditorOptions.map(item => <option key={item.id} value={item.value}>{item.label}</option>)}</select></div>
+          </label>
         </div>
         {validationError && <div className="audit-checklist-note" role="alert"><AlertCircle size={18} /><span>{validationError}</span></div>}
         <div className="form-footer"><button className="secondary-button" type="button" onClick={saveCreationDraft} disabled={savingAudit}><Save size={17} /> Save draft</button><button className="primary-button" type="button" onClick={continueToChecklist} disabled={savingAudit}>Continue to checklist <ChevronRight size={17} /></button></div>
       </section>}
       <section>
-        <div className="list-toolbar"><div className="search-bar"><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by audit number, audit name, location or department" /></div></div>
+        <div className="list-toolbar"><div className="search-bar"><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by audit number, audit name or location" /></div></div>
         <div className="card data-list">
           {rows.map(a => {
             const title = a.audit_type || a.title || AUDIT_TYPE
-            const subtitle = [a.location, a.department, a.start_date || a.date].filter(Boolean).join(' - ')
+            const subtitle = [a.location, a.start_date || a.date].filter(Boolean).join(' - ')
             const canDelete = isSystemAdmin(user) && isInProgressAuditStatus(a.status)
             return <DataRow key={a.id} title={title} subtitle={`${a.auditNumber || a.auditId || a.id} - ${subtitle || 'No details'}`} meta={a.score ? `${a.score}%` : null} status={a.status} onClick={() => navigate(`/audits/${a.id}/conduct`)} onDelete={canDelete ? () => handleDeleteAudit(a.id) : undefined} />
           })}

@@ -9,10 +9,56 @@ import { CapaProvider } from './capa/CapaContext'
 import { GovernanceProvider } from './governance/GovernanceContext'
 import { NotificationProvider } from './notifications/NotificationContext'
 import { YokotenProvider } from './yokoten/YokotenContext'
+import { buildInfo } from './buildInfo'
 import './styles.css'
 
+function getServiceWorkerStatus() {
+  if (!('serviceWorker' in navigator)) return 'unsupported'
+  const controller = navigator.serviceWorker.controller ? 'controlled' : 'not-controlled'
+  return `${controller}; ready-check-pending`
+}
+
+function logStartupDiagnostics(serviceWorkerStatus) {
+  console.info('[DISHA HSC Pulse startup]', {
+    appVersion: buildInfo.appVersion,
+    buildTimestamp: buildInfo.buildTimestamp,
+    supabaseHost: buildInfo.supabaseHost,
+    currentRoute: window.location.pathname,
+    mode: buildInfo.mode,
+    serviceWorkerStatus,
+  })
+}
+
 if (import.meta.env.PROD) {
-  registerSW({ immediate: true })
+  const updateServiceWorker = registerSW({
+    immediate: true,
+    onNeedRefresh() {
+      console.info('[DISHA HSC Pulse PWA] New build available; refreshing service worker cache.')
+      updateServiceWorker(true)
+    },
+    onOfflineReady() {
+      console.info('[DISHA HSC Pulse PWA] Offline cache is ready.')
+    },
+    onRegisteredSW(_, registration) {
+      const serviceWorkerStatus = registration
+        ? `registered; ${navigator.serviceWorker.controller ? 'controlled' : 'not-controlled'}`
+        : getServiceWorkerStatus()
+      logStartupDiagnostics(serviceWorkerStatus)
+
+      if (registration) {
+        window.addEventListener('focus', () => registration.update())
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') registration.update()
+        })
+      }
+    },
+    onRegisterError(error) {
+      console.error('[DISHA HSC Pulse PWA] Service worker registration failed.', error)
+      logStartupDiagnostics(`registration-error: ${error?.message || 'unknown'}`)
+    },
+  })
+} else {
+  logStartupDiagnostics('disabled-in-development')
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(

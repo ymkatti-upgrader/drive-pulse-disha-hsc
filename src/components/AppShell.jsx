@@ -3,6 +3,7 @@ import { ArrowRight, BarChart3, Bell, BookOpenCheck, ClipboardCheck, FileBarChar
 import { useState } from 'react'
 import { canAccessFeature, getPrimaryRole, getRoleProfile, useAuth } from '../auth/AuthContext'
 import { useNotifications } from '../notifications/NotificationContext'
+import { buildInfo, formattedBuildLabel } from '../buildInfo'
 
 const roleLabels = {
   CEO: 'CEO',
@@ -44,17 +45,63 @@ function dedupeNavigation(items) {
   })
 }
 
+function normalizePathname(pathname) {
+  const normalized = String(pathname || '/').replace(/\/+$/, '')
+  return normalized || '/'
+}
+
+function isConductAuditPath(pathname) {
+  return /^\/audits\/[^/]+\/conduct$/.test(pathname)
+}
+
+function isAuditWorkbenchPath(pathname) {
+  return ['/audits', '/audits/new', '/audits/create', '/audits/history'].includes(pathname)
+}
+
+function isFeatureRouteActive(feature, pathname) {
+  if (feature === 'dashboard') return pathname === '/dashboard'
+  if (feature === 'audit-workbench') return isAuditWorkbenchPath(pathname)
+  if (feature === 'conduct-audit') return isConductAuditPath(pathname)
+  if (feature === 'verification') return pathname === '/verification' || pathname.startsWith('/verification/')
+  if (feature === 'action-center' || feature === 'review-queue' || feature === 'financial-review' || feature === 'financial-approvals') {
+    return pathname === '/action-center' || pathname.startsWith('/action-center/')
+  }
+  if (feature === 'reports') return pathname === '/reports' || pathname.startsWith('/reports/')
+  if (feature === 'management-review') return pathname === '/management-review' || pathname.startsWith('/management-review/')
+  if (feature === 'yokoten') return pathname === '/yokoten' || pathname.startsWith('/yokoten/')
+  if (feature === 'masters') return pathname === '/masters' || pathname.startsWith('/masters/')
+  return false
+}
+
+function getNavKey(item) {
+  return `${item.feature}|${item.to}|${item.label}`
+}
+
+function getActiveNavKey(items, pathname) {
+  const normalizedPathname = normalizePathname(pathname)
+  const routePriority = ['conduct-audit', 'audit-workbench']
+
+  for (const feature of routePriority) {
+    const item = items.find(navItem => navItem.feature === feature && isFeatureRouteActive(navItem.feature, normalizedPathname))
+    if (item) return getNavKey(item)
+  }
+
+  const item = items.find(navItem => isFeatureRouteActive(navItem.feature, normalizedPathname))
+  return item ? getNavKey(item) : ''
+}
+
 export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [notificationOpen, setNotificationOpen] = useState(false)
-  const { user, logout } = useAuth()
+  const { user, actualUser, logout, sitModeAvailable, sitRoleKey, sitRoleOptions, setSitRole, clearSitRole } = useAuth()
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
   const navigate = useNavigate()
   const location = useLocation()
   const roleProfile = getRoleProfile(user)
   const roleLabel = roleLabels[getPrimaryRole(user)] || getPrimaryRole(user)
   const mobileNo = user?.mobile_no || user?.mobile || ''
+  const actualMobileNo = actualUser?.mobile_no || actualUser?.mobile || ''
   const sidebarNav = dedupeNavigation(
     roleProfile.navigation
       .map(item => ({ ...item, ...navCatalog[item.feature] }))
@@ -62,7 +109,8 @@ export default function AppShell() {
   )
   const primaryNav = sidebarNav.slice(0, 3)
   const secondaryNav = sidebarNav.slice(3)
-  const isMoreRoute = secondaryNav.some(item => location.pathname.startsWith(item.to))
+  const activeNavKey = getActiveNavKey(sidebarNav, location.pathname)
+  const isMoreRoute = secondaryNav.some(item => getNavKey(item) === activeNavKey)
 
   async function handleLogout() {
     await logout()
@@ -88,10 +136,30 @@ export default function AppShell() {
       <div className="brand"><span className="brand-mark">DP</span><div><strong>Drive Pulse</strong><small>DISHA HSC</small></div></div>
       <button className="close-menu" aria-label="Close menu" onClick={() => setSidebarOpen(false)}><X /></button>
       <div className="workspace-label">{roleProfile.dashboardName}</div>
-      <nav>{sidebarNav.map(({ to, label, icon: Icon }) => <NavLink to={to} key={`${to}-${label}`} onClick={() => setSidebarOpen(false)}><Icon size={19} /><span>{label}</span></NavLink>)}</nav>
+      {sitModeAvailable && <section className="sit-mode-panel" aria-label="SIT role switcher">
+        <div className="sit-mode-head">
+          <span>SIT MODE</span>
+          <strong>Switch Role</strong>
+          <small>Super Admin only</small>
+        </div>
+        <select value={sitRoleKey || ''} onChange={event => setSitRole(event.target.value)} aria-label="Switch SIT role">
+          <option value="">Real Super Admin</option>
+          {sitRoleOptions.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}
+        </select>
+        {sitRoleKey && <button type="button" onClick={clearSitRole}>Return to Super Admin</button>}
+      </section>}
+      <nav>{sidebarNav.map(item => {
+        const { to, label, icon: Icon } = item
+        const navKey = getNavKey(item)
+        return <NavLink to={to} key={`${to}-${label}`} className={navKey === activeNavKey ? 'active' : ''} onClick={() => setSidebarOpen(false)}><Icon size={19} /><span>{label}</span></NavLink>
+      })}</nav>
 
       <div className="sidebar-account">
-        <div className="user-card"><span>{roleLabel.slice(0, 2).toUpperCase()}</span><div><strong>{roleLabel}</strong><small>+91 {mobileNo}</small></div></div>
+        <div className="app-build-indicator" title={`Supabase: ${buildInfo.supabaseHost}`}>
+          <span>{formattedBuildLabel()}</span>
+          <small>{buildInfo.supabaseHost}</small>
+        </div>
+        <div className="user-card"><span>{roleLabel.slice(0, 2).toUpperCase()}</span><div><strong>{roleLabel}</strong><small>+91 {mobileNo}</small>{user?.__sitMode && <em>SIT via +91 {actualMobileNo}</em>}</div></div>
         <button className="logout-button" onClick={handleLogout}><LogOut size={18} /><span>Logout</span></button>
       </div>
     </aside>
@@ -103,7 +171,7 @@ export default function AppShell() {
         <button className="menu-button" aria-label="Open menu" onClick={() => setSidebarOpen(true)}><Menu /></button>
         <div className="mobile-brand"><span className="brand-mark">DP</span><strong>{roleProfile.dashboardName}</strong></div>
         <div className="topbar-actions">
-          <div className="header-identity"><strong>{roleLabel}</strong><span>+91 {mobileNo}</span></div>
+          <div className="header-identity"><strong>{user?.__sitMode ? `SIT: ${roleLabel}` : roleLabel}</strong><span>+91 {mobileNo}</span></div>
           <button className="icon-button notification-trigger" aria-label="Notifications" onClick={() => setNotificationOpen(current => !current)}><Bell size={20} />{unreadCount > 0 && <i />}{unreadCount > 0 && <span>{unreadCount > 9 ? '9+' : unreadCount}</span>}</button>
           <div className="top-avatar">{roleLabel.slice(0, 2).toUpperCase()}</div>
         </div>
@@ -144,13 +212,21 @@ export default function AppShell() {
       <button className="more-scrim" aria-label="Close More menu" onClick={() => setMoreOpen(false)} />
       <section className="more-sheet" aria-label="More menu">
         <div className="more-sheet-head"><div><strong>{roleLabel}</strong><span>+91 {mobileNo}</span></div><button aria-label="Close More menu" onClick={() => setMoreOpen(false)}><X size={20} /></button></div>
-        {secondaryNav.map(({ to, label, description, icon: Icon }) => <button key={`${to}-${label}`} onClick={() => openMoreRoute(to)}><Icon size={20} /><span><strong>{label}</strong><small>{description}</small></span></button>)}
+        {secondaryNav.map(item => {
+          const { to, label, description, icon: Icon } = item
+          const navKey = getNavKey(item)
+          return <button key={`${to}-${label}`} className={navKey === activeNavKey ? 'active' : undefined} onClick={() => openMoreRoute(to)}><Icon size={20} /><span><strong>{label}</strong><small>{description}</small></span></button>
+        })}
         <button className="mobile-logout" onClick={handleLogout}><LogOut size={20} /><span><strong>Logout</strong><small>Sign out of Drive Pulse | DISHA HSC</small></span></button>
       </section>
     </>}
 
     <nav className="bottom-nav">
-      {primaryNav.map(({ to, label, icon: Icon }) => <NavLink to={to} key={`${to}-${label}`}><Icon size={20} /><span>{label}</span></NavLink>)}
+      {primaryNav.map(item => {
+        const { to, label, icon: Icon } = item
+        const navKey = getNavKey(item)
+        return <NavLink to={to} key={`${to}-${label}`} className={navKey === activeNavKey ? 'active' : ''}><Icon size={20} /><span>{label}</span></NavLink>
+      })}
       <button className={moreOpen || isMoreRoute ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal size={20} /><span>More</span></button>
     </nav>
   </div>
