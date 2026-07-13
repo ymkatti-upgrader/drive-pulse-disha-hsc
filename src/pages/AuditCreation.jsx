@@ -238,7 +238,21 @@ export default function AuditCreation() {
 
   async function continueToChecklist() {
     const nextAuditId = await saveAuditRecord('In Progress')
-    if (nextAuditId) navigate(`/audits/${nextAuditId}/conduct`)
+    if (nextAuditId) {
+      localStorage.removeItem(CREATION_DRAFT_KEY)
+      navigate(`/audits/${nextAuditId}/conduct`)
+    }
+  }
+
+  function startNewAudit() {
+    localStorage.removeItem(CREATION_DRAFT_KEY)
+    setAuditId('')
+    setValidationError('')
+    setForm({
+      locationId: '',
+      auditorId: '',
+      startDate: new Date().toISOString().slice(0, 10),
+    })
   }
 
   const upcoming = scopedAudits.filter(item => normalizedText(item.status) === 'scheduled').length
@@ -268,7 +282,7 @@ export default function AuditCreation() {
   }
 
   return <>
-    <PageHeader eyebrow="AUDIT MANAGEMENT" title="Audits" description="Plan, assign and monitor HanSaChu audits." action={canEditAudit ? <button className="primary-button"><Plus size={17} /> New audit</button> : <StatusBadge>Read-only View</StatusBadge>} />
+    <PageHeader eyebrow="AUDIT MANAGEMENT" title="Audits" description="Plan, assign and monitor HanSaChu audits." action={canEditAudit ? <button className="primary-button" type="button" onClick={startNewAudit}><Plus size={17} /> New audit</button> : <StatusBadge>Read-only View</StatusBadge>} />
     <div className="tabs"><button className="active">All audits <span>{scopedAudits.length}</span></button><button>Upcoming <span>{upcoming}</span></button><button>In progress <span>{inProgress}</span></button><button>Completed <span>{completed}</span></button></div>
     <div className="two-column-form">
       {canEditAudit && <section className="card panel">
