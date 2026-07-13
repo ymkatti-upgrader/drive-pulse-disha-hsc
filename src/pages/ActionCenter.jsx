@@ -562,7 +562,10 @@ export default function ActionCenter() {
     async function loadPeople() {
       try {
         const client = requireSupabase()
-        const { data, error: loadError } = await client.from('app_users').select('*').eq('active', true)
+        const { data, error: loadError } = await client
+          .from('app_users')
+          .select('id, employee_name, mobile_no, active')
+          .eq('active', true)
         if (loadError) throw loadError
         if (!cancelled) setPeople(data || [])
       } catch {
