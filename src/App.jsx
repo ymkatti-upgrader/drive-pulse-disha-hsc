@@ -37,7 +37,7 @@ export default function App() {
         <Route path="/reports" element={<FeatureRouteGuard feature="reports"><Reports /></FeatureRouteGuard>} />
         <Route path="/management-review" element={<FeatureRouteGuard feature="management-review"><ManagementReviewCenter /></FeatureRouteGuard>} />
         <Route path="/super-admin" element={<AdminOnly><SuperAdminControlCenter /></AdminOnly>} />
-        <Route path="/action-center" element={<ActionCenter />} />
+        <Route path="/action-center" element={<FeatureRouteGuard feature="action-center"><ActionCenter /></FeatureRouteGuard>} />
         <Route path="/masters" element={<AdminOnly><MasterData /></AdminOnly>} />
         <Route path="/masters/import" element={<AdminOnly><MasterImport /></AdminOnly>} />
         <Route path="/master-data" element={<Navigate to="/masters" replace />} />

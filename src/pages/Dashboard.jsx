@@ -92,7 +92,7 @@ function ListPanel({ eyebrow, title, rows, getTitle, getSubtitle, getBadge, onCl
   if (!rows.length) return <EmptyPanel title={title} />
   return <Panel eyebrow={eyebrow} title={title}>
     <div className="role-compact-list">
-      {rows.map(item => <button key={item.id || item.capaId || item.auditId || item.name} className="role-list-item" onClick={() => onClick?.(item)}>
+      {rows.map((item, index) => <button key={item.id || item.capaId || item.auditId || item.response_id || item.name || `row-${index}`} className="role-list-item" onClick={() => onClick?.(item)}>
         <div>
           <strong>{getTitle(item)}</strong>
           <span>{getSubtitle(item)}</span>

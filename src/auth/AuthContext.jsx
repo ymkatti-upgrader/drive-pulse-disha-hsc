@@ -4,12 +4,14 @@ import { requireSupabase, supabase } from '../supabaseClient'
 const AUTH_KEY = 'current_user'
 const LEGACY_AUTH_KEY = 'disha-hsc-auth'
 const SIT_MODE_KEY = 'disha-hsc-sit-role'
+const SESSION_TOKEN_KEY = 'disha-hsc-session-token'
 const SUPER_ADMIN_MOBILE_NO = '9964214342'
 const SIT_MODE_ENABLED = import.meta.env.VITE_ENABLE_SIT_MODE !== 'false'
 const SESSION_STORAGE_KEYS = [
   AUTH_KEY,
   LEGACY_AUTH_KEY,
   SIT_MODE_KEY,
+  SESSION_TOKEN_KEY,
   'disha-hsc-notification-reads',
   'disha-hsc-audit-creation-draft',
 ]
@@ -131,6 +133,14 @@ function readSitRoleKey() {
   }
 }
 
+function readSessionToken() {
+  try {
+    return localStorage.getItem(SESSION_TOKEN_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
 function clearSessionStorage() {
   SESSION_STORAGE_KEYS.forEach(key => {
     localStorage.removeItem(key)
@@ -164,25 +174,6 @@ function normalizeActive(value) {
   const flag = String(value ?? '').trim().toLowerCase()
   if (['no', 'n', 'false', '0', 'inactive'].includes(flag)) return false
   return true
-}
-
-export async function hashPasswordValue(value) {
-  const text = String(value ?? '')
-  const bytes = new TextEncoder().encode(text)
-  if (globalThis.crypto?.subtle) {
-    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
-    return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
-  }
-  return text
-}
-
-async function passwordMatchesStoredValue(enteredPassword, storedPassword, storedHash) {
-  const normalizedEntered = String(enteredPassword ?? '').trim()
-  const normalizedStored = String(storedPassword ?? '').trim()
-  const normalizedHash = String(storedHash ?? '').trim()
-  if (normalizedHash) return (await hashPasswordValue(normalizedEntered)) === normalizedHash
-  if (/^[0-9a-f]{64}$/i.test(normalizedStored)) return (await hashPasswordValue(normalizedEntered)) === normalizedStored
-  return normalizedEntered === normalizedStored
 }
 
 function normalizedText(value) {
@@ -247,68 +238,6 @@ function normalizeImportRow(row) {
     department: String(row.department || row.Department || '').trim(),
     location: String(row.location || row.Location || '').trim(),
     user_type: String(row.user_type || row.userType || row['User Type'] || '').trim(),
-  }
-}
-
-const AUTH_USER_SELECT = 'id, employee_name, mobile_no, password, password_hash, must_reset_password, active, account_locked, failed_login_attempts, password_changed_at, last_login_at, created_at, updated_at'
-const LEGACY_AUTH_USER_SELECT = 'id, employee_name, mobile_no, password, active, created_at, updated_at'
-
-function maskDiagnosticMobile(value) {
-  const text = String(value || '')
-  if (!text) return ''
-  return `${'*'.repeat(Math.max(0, text.length - 4))}${text.slice(-4)}`
-}
-
-function getLoginSupabaseDiagnostics() {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || ''
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
-
-  return {
-    VITE_SUPABASE_URL: supabaseUrl || '(missing)',
-    anonKeyExists: Boolean(anonKey),
-    anonKeyLength: anonKey.length,
-  }
-}
-
-function logAppUsersQueryDiagnostic(stage, { enteredMobile, result, selectColumns }) {
-  const error = result?.error || null
-  const request = {
-    table: 'app_users',
-    select: selectColumns,
-    filters: [
-      {
-        column: 'mobile_no',
-        operator: 'eq',
-        valueMasked: maskDiagnosticMobile(enteredMobile),
-        valueLength: String(enteredMobile || '').length,
-      },
-    ],
-    maybeSingle: true,
-  }
-
-  console.info('[Login diagnostics] app_users query', {
-    stage,
-    env: getLoginSupabaseDiagnostics(),
-    request,
-    table: 'app_users',
-    httpStatus: result?.status ?? error?.status ?? null,
-    statusText: result?.statusText ?? error?.statusText ?? null,
-    errorCode: error?.code ?? null,
-    errorMessage: error?.message ?? null,
-  })
-
-  if (error) {
-    console.error('[Login diagnostics] app_users query error', {
-      stage,
-      table: 'app_users',
-      httpStatus: result?.status ?? error?.status ?? null,
-      statusText: result?.statusText ?? error?.statusText ?? null,
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      fullError: error,
-    })
   }
 }
 
@@ -609,6 +538,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(readStoredUser)
   const [users, setUsers] = useState([])
   const [sitRoleKey, setSitRoleKey] = useState(readSitRoleKey)
+  const [sessionToken, setSessionToken] = useState(readSessionToken)
   const effectiveUser = useMemo(() => buildSitModeUser(user, sitRoleKey), [user, sitRoleKey])
 
   // Cached sessions can carry a must_reset_password value that predates a
@@ -651,11 +581,14 @@ export function AuthProvider({ children }) {
     }
   }, [user?.id])
 
-  function persistSession(nextUser) {
+  function persistSession(nextUser, token) {
     const safeUser = sanitizeUser(nextUser)
+    const tokenToKeep = token || readSessionToken()
     clearSessionStorage()
     localStorage.setItem(AUTH_KEY, JSON.stringify(safeUser))
     localStorage.removeItem(LEGACY_AUTH_KEY)
+    if (tokenToKeep) localStorage.setItem(SESSION_TOKEN_KEY, tokenToKeep)
+    setSessionToken(tokenToKeep || '')
     setUser(safeUser)
     return safeUser
   }
@@ -665,6 +598,7 @@ export function AuthProvider({ children }) {
     actualUser: user,
     users: users.map(sanitizeUser),
     passwordRules,
+    sessionToken,
     isAuthenticated: Boolean(user),
     sitModeEnabled: SIT_MODE_ENABLED,
     sitModeAvailable: SIT_MODE_ENABLED && isSuperAdmin(user),
@@ -688,100 +622,20 @@ export function AuthProvider({ children }) {
         const enteredMobile = normalizeMobile(mobile)
         const enteredPassword = String(password).trim()
 
-        logAppUsersQueryDiagnostic('before primary app_users read', {
-          enteredMobile,
-          selectColumns: AUTH_USER_SELECT,
+        const { data, error } = await client.rpc('login_user', {
+          p_mobile_no: enteredMobile,
+          p_password: enteredPassword,
         })
-        let userResult = await client
-          .from('app_users')
-          .select(AUTH_USER_SELECT)
-          .eq('mobile_no', enteredMobile)
-          .maybeSingle()
-        if (userResult.error) {
-          logAppUsersQueryDiagnostic('primary app_users read error', {
-            enteredMobile,
-            result: userResult,
-            selectColumns: AUTH_USER_SELECT,
-          })
+        if (error) {
+          console.error('Login RPC failed', error)
+          return { ok: false, error: error.message || 'Unable to connect to backend.' }
         }
-        if (userResult.error && /column .* does not exist/i.test(userResult.error.message || '')) {
-          logAppUsersQueryDiagnostic('before legacy app_users read', {
-            enteredMobile,
-            selectColumns: LEGACY_AUTH_USER_SELECT,
-          })
-          userResult = await client
-            .from('app_users')
-            .select(LEGACY_AUTH_USER_SELECT)
-            .eq('mobile_no', enteredMobile)
-            .maybeSingle()
-          if (userResult.error) {
-            logAppUsersQueryDiagnostic('legacy app_users read error', {
-              enteredMobile,
-              result: userResult,
-              selectColumns: LEGACY_AUTH_USER_SELECT,
-            })
-          }
-        }
-        const { data: matchedUser, error: userError } = userResult
-        if (userError) {
-          logAppUsersQueryDiagnostic('final app_users lookup failure', {
-            enteredMobile,
-            result: userResult,
-            selectColumns: userResult.error && /column .* does not exist/i.test(userResult.error.message || '') ? LEGACY_AUTH_USER_SELECT : AUTH_USER_SELECT,
-          })
-          console.error('Supabase user lookup failed', userError)
-          return { ok: false, error: 'Unable to read backend users. Please contact Super Admin.' }
-        }
-        if (!matchedUser || !matchedUser.active) {
-          return { ok: false, error: 'User profile not found or not approved. Please contact Super Admin.' }
-        }
-        if (matchedUser.account_locked) return { ok: false, error: 'Account is locked. Please contact Super Admin.' }
-
-        const passwordMatched = await passwordMatchesStoredValue(enteredPassword, matchedUser.password, matchedUser.password_hash)
-        if (!passwordMatched) {
-          const failedAttempts = (Number(matchedUser.failed_login_attempts) || 0) + 1
-          await client
-            .from('app_users')
-            .update({
-              failed_login_attempts: failedAttempts,
-              account_locked: failedAttempts >= 5,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', matchedUser.id)
-          return { ok: false, error: failedAttempts >= 5 ? 'Account locked after too many failed attempts. Please contact Super Admin.' : 'Incorrect password.' }
+        if (!data?.success) {
+          return { ok: false, error: data?.error || 'Unable to sign in.' }
         }
 
-        const { data: mappings, error: mappingsError } = await client
-          .from('user_access_mappings')
-          .select('role, department, location, user_type')
-          .eq('user_id', matchedUser.id)
-          .eq('active', true)
-        if (mappingsError) {
-          console.error('Supabase user access lookup failed', mappingsError)
-          return { ok: false, error: 'Unable to read user access details. Please contact Super Admin.' }
-        }
-
-        const now = new Date().toISOString()
-        const { error: loginUpdateError } = await client
-          .from('app_users')
-          .update({
-            last_login_at: now,
-            failed_login_attempts: 0,
-            account_locked: false,
-            updated_at: now,
-          })
-          .eq('id', matchedUser.id)
-        if (loginUpdateError) return { ok: false, error: loginUpdateError.message || 'Unable to finalize login.' }
-
-        const sessionUser = toSessionUser({
-          ...matchedUser,
-          must_reset_password: Boolean(matchedUser.must_reset_password ?? matchedUser.must_change_password),
-          must_change_password: Boolean(matchedUser.must_reset_password ?? matchedUser.must_change_password),
-          last_login_at: now,
-          failed_login_attempts: 0,
-          account_locked: false,
-        }, mappings || [])
-        const safeUser = persistSession(sessionUser)
+        const sessionUser = toSessionUser(data.user, data.access || [])
+        const safeUser = persistSession(sessionUser, data.session_token)
         localStorage.removeItem(SIT_MODE_KEY)
         setSitRoleKey('')
         return {
@@ -807,45 +661,25 @@ export function AuthProvider({ children }) {
       if (!validation.valid) return { ok: false, error: 'Password does not meet the security rules.', validation }
 
       const client = requireSupabase()
-      let currentUserResult = await client
-        .from('app_users')
-        .select(AUTH_USER_SELECT)
-        .eq('id', user.id)
-        .maybeSingle()
-      if (currentUserResult.error && /column .* does not exist/i.test(currentUserResult.error.message || '')) {
-        currentUserResult = await client
-          .from('app_users')
-          .select(LEGACY_AUTH_USER_SELECT)
-          .eq('id', user.id)
-          .maybeSingle()
-      }
-      const { data: currentUserRow, error: currentUserError } = currentUserResult
-      if (currentUserError) return { ok: false, error: currentUserError.message || 'Unable to validate current password.' }
-      if (!currentUserRow) return { ok: false, error: 'Session expired. Please sign in again.' }
-
-      const currentMatches = await passwordMatchesStoredValue(enteredCurrentPassword, currentUserRow.password, currentUserRow.password_hash)
-      if (!currentMatches) return { ok: false, error: 'Current password does not match.' }
-
-      const hashedPassword = await hashPasswordValue(newPassword)
-      const now = new Date().toISOString()
-        const { data: nextUser, error } = await client
-        .from('app_users')
-        .update({
-          password: hashedPassword,
-          password_hash: hashedPassword,
-          must_reset_password: false,
-          password_changed_at: now,
-          last_login_at: now,
-          failed_login_attempts: 0,
-          account_locked: false,
-          updated_at: now,
-        })
-        .eq('id', user.id)
-        .select(AUTH_USER_SELECT)
-        .single()
+      const { data, error } = await client.rpc('change_own_password', {
+        p_user_id: user.id,
+        p_session_token: sessionToken,
+        p_current_password: enteredCurrentPassword,
+        p_new_password: String(newPassword),
+      })
       if (error) return { ok: false, error: error.message || 'Unable to update password.' }
+      if (!data?.success) return { ok: false, error: data?.error || 'Unable to update password.', validation }
 
-      persistSession({ ...user, ...toSessionUser(nextUser, user.access || []) })
+      const now = new Date().toISOString()
+      persistSession({
+        ...user,
+        must_reset_password: false,
+        must_change_password: false,
+        password_changed_at: now,
+        last_login_at: now,
+        failed_login_attempts: 0,
+        account_locked: false,
+      })
       return { ok: true }
     },
     async importUsers(importedUsers) {
@@ -854,47 +688,13 @@ export function AuthProvider({ children }) {
       if (!incoming.length) return { ok: true, created: 0, updated: 0, mappings: 0, total: 0, imported: 0 }
 
       const mobileNumbers = [...new Set(incoming.map(row => row.mobile_no))]
-      const existingResult = await client
-        .from('app_users')
-        .select(AUTH_USER_SELECT)
-        .in('mobile_no', mobileNumbers)
-      const existingUsersResult = existingResult.error && /column .* does not exist/i.test(existingResult.error.message || '')
-        ? await client.from('app_users').select(LEGACY_AUTH_USER_SELECT).in('mobile_no', mobileNumbers)
-        : existingResult
-      const { data: existingUsers, error: existingError } = existingUsersResult
-      if (existingError) throw existingError
-
-      const existingByMobile = new Map((existingUsers || []).map(row => [row.mobile_no, row]))
-      const defaultPasswordHash = await hashPasswordValue(DEFAULT_PASSWORD)
-      const usersByMobile = new Map()
-      incoming.forEach(row => {
-        const nextUser = usersByMobile.get(row.mobile_no) || {
-          employee_name: '',
-          mobile_no: row.mobile_no,
-          password: defaultPasswordHash,
-          password_hash: defaultPasswordHash,
-          active: false,
-        }
-
-        usersByMobile.set(row.mobile_no, {
-          employee_name: row.employee_name || nextUser.employee_name,
-          mobile_no: row.mobile_no,
-          password: defaultPasswordHash,
-          password_hash: defaultPasswordHash,
-          must_reset_password: true,
-          password_changed_at: null,
-          last_login_at: null,
-          failed_login_attempts: 0,
-          account_locked: false,
-          active: Boolean(nextUser.active || row.active),
-        })
+      const { data, error } = await client.rpc('admin_bulk_import_users', {
+        p_admin_user_id: user?.id,
+        p_admin_session_token: sessionToken,
+        p_rows: incoming,
       })
-
-      const usersPayload = [...usersByMobile.values()]
-      const { error: upsertUsersError } = await client
-        .from('app_users')
-        .upsert(usersPayload, { onConflict: 'mobile_no' })
-      if (upsertUsersError) throw upsertUsersError
+      if (error) throw error
+      if (!data?.success) throw new Error(data?.error || 'Unable to import users.')
 
       const { data: refreshedUsers, error: refreshError } = await client
         .from('app_users')
@@ -902,40 +702,16 @@ export function AuthProvider({ children }) {
         .in('mobile_no', mobileNumbers)
       if (refreshError) throw refreshError
 
-      const idByMobile = new Map((refreshedUsers || []).map(row => [row.mobile_no, row.id]))
-      const mappingByKey = new Map()
-      incoming.forEach(row => {
-        const userId = idByMobile.get(row.mobile_no)
-        if (!userId) return
-
-        const mapping = {
-          user_id: userId,
-          role: row.role || '',
-          department: row.department || '',
-          location: row.location || '',
-          user_type: row.user_type || '',
-          active: row.active,
-        }
-        const key = [mapping.user_id, mapping.role, mapping.department, mapping.location, mapping.user_type].join('|')
-        if (!mappingByKey.has(key)) mappingByKey.set(key, mapping)
-      })
-      const mappingPayload = [...mappingByKey.values()]
-
-      const { error: upsertMappingsError } = await client
-        .from('user_access_mappings')
-        .upsert(mappingPayload, { onConflict: 'user_id,role,department,location,user_type' })
-      if (upsertMappingsError) throw upsertMappingsError
-
       setUsers(refreshedUsers || [])
       return {
         ok: true,
-        created: usersPayload.filter(row => !existingByMobile.has(row.mobile_no)).length,
-        updated: usersPayload.filter(row => existingByMobile.has(row.mobile_no)).length,
-        mappings: mappingPayload.length,
-        total: refreshedUsers?.length || 0,
+        created: data.created || 0,
+        updated: data.updated || 0,
+        mappings: data.mappings || 0,
+        total: data.total || 0,
         imported: incoming.length,
-        uniqueUsers: usersPayload.length,
-        accessMappings: mappingPayload.length,
+        uniqueUsers: data.total || 0,
+        accessMappings: data.mappings || 0,
       }
     },
     async resetUserPassword(mobile) {
@@ -944,24 +720,13 @@ export function AuthProvider({ children }) {
       if (normalizedMobile === user.mobile_no) return { ok: false, error: 'Use password reset screen to change your own password.' }
 
       const client = requireSupabase()
-      const defaultPasswordHash = await hashPasswordValue(DEFAULT_PASSWORD)
-      const { data, error } = await client
-        .from('app_users')
-        .update({
-          password: defaultPasswordHash,
-          password_hash: defaultPasswordHash,
-          must_reset_password: true,
-          password_changed_at: null,
-          last_login_at: null,
-          failed_login_attempts: 0,
-          account_locked: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('mobile_no', normalizedMobile)
-        .eq('active', true)
-        .select('id')
+      const { data, error } = await client.rpc('admin_reset_password', {
+        p_admin_user_id: user.id,
+        p_admin_session_token: sessionToken,
+        p_target_mobile_no: normalizedMobile,
+      })
       if (error) return { ok: false, error: error.message || 'Unable to reset password.' }
-      if (!data?.length) return { ok: false, error: 'No active user found for that mobile number.' }
+      if (!data?.success) return { ok: false, error: data?.error || 'Unable to reset password.' }
       return { ok: true }
     },
     setRole(role) {
@@ -974,6 +739,7 @@ export function AuthProvider({ children }) {
     },
     async logout() {
       try {
+        if (supabase && sessionToken) await supabase.rpc('logout_session', { p_session_token: sessionToken })
         if (supabase) {
           const { data } = await supabase.auth.getSession()
           if (data?.session) await supabase.auth.signOut()
@@ -983,10 +749,11 @@ export function AuthProvider({ children }) {
       } finally {
         clearSessionStorage()
         setSitRoleKey('')
+        setSessionToken('')
         setUser(null)
       }
     },
-  }), [effectiveUser, sitRoleKey, user, users])
+  }), [effectiveUser, sitRoleKey, sessionToken, user, users])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

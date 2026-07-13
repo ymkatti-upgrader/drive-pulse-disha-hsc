@@ -105,7 +105,7 @@ function MasterEditModal({ title, fields, value, onCancel, onSave }) {
 
 export default function MasterData() {
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, sessionToken } = useAuth()
   const [selected, setSelected] = useState('users')
   const [editor, setEditor] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -212,25 +212,20 @@ export default function MasterData() {
     try {
       const client = requireSupabase()
       if (selected === 'users') {
-        const payload = {
-          id: form.user_id || form.id || undefined,
-          employee_name: form.employee_name || '',
-          mobile_no: String(form.mobile_no || '').replace(/\D/g, '').slice(-10),
-          active: mapStatus(form.status) === 'Active' || String(form.status || '').toLowerCase() === 'active',
-        }
-        const userResult = await client.from('app_users').upsert(payload, { onConflict: 'mobile_no' }).select('id')
-        if (userResult.error) throw userResult.error
-        const userId = userResult.data?.[0]?.id || payload.id
-        const mappingPayload = {
-          user_id: userId,
-          role: form.role || '',
-          department: form.department || '',
-          location: form.location || '',
-          user_type: form.user_type || '',
-          active: true,
-        }
-        const mappingResult = await client.from('user_access_mappings').upsert(mappingPayload, { onConflict: 'user_id,role,department,location,user_type' })
-        if (mappingResult.error) throw mappingResult.error
+        const { data: rpcData, error: rpcError } = await client.rpc('admin_create_or_update_user', {
+          p_admin_user_id: user?.id,
+          p_admin_session_token: sessionToken,
+          p_target_user_id: form.user_id || form.id || null,
+          p_employee_name: form.employee_name || '',
+          p_mobile_no: String(form.mobile_no || '').replace(/\D/g, '').slice(-10),
+          p_active: mapStatus(form.status) === 'Active' || String(form.status || '').toLowerCase() === 'active',
+          p_role: form.role || '',
+          p_department: form.department || '',
+          p_location: form.location || '',
+          p_user_type: form.user_type || '',
+        })
+        if (rpcError) throw rpcError
+        if (!rpcData?.success) throw new Error(rpcData?.error || 'Unable to save user.')
       } else if (selected === 'departments') {
         const result = await client.from('departments').upsert({
           id: form.id || undefined,
@@ -285,8 +280,13 @@ export default function MasterData() {
     try {
       const client = requireSupabase()
       if (selected === 'users') {
-        const result = await client.from('app_users').delete().eq('id', row.id)
-        if (result.error) throw result.error
+        const { data: rpcData, error: rpcError } = await client.rpc('admin_delete_user', {
+          p_admin_user_id: user?.id,
+          p_admin_session_token: sessionToken,
+          p_target_user_id: row.id,
+        })
+        if (rpcError) throw rpcError
+        if (!rpcData?.success) throw new Error(rpcData?.error || 'Unable to remove user.')
       } else if (selected === 'departments') {
         const result = await client.from('departments').delete().eq('id', row.id)
         if (result.error) throw result.error

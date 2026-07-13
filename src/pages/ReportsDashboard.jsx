@@ -81,8 +81,7 @@ function getVisibleTabs(roleProfileId) {
 function getScopedDepartments(user, roleProfileId) {
   const departments = getAccessScopeValues(user, 'department')
   if (!departments.length) return []
-  if (roleProfileId === 'group-functional-hod') return departments.filter(value => String(value || '').trim().toLowerCase() !== 'all')
-  return departments
+  return departments.filter(value => String(value || '').trim().toLowerCase() !== 'all')
 }
 
 function getScopedLocations(user) {
@@ -261,19 +260,40 @@ export default function ReportsDashboard() {
 
       const stableResponseSelect = 'id, audit_id, audit_uuid, checklist_id, result, sub_question_text, audit_location, audit_department, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, closure_status, verification_status, cause_category, monetary_support_required, expected_expense_amount, expense_category, expense_purpose, expense_approval_status, expense_approver_role, quotation_files, is_void, tentative_closing_date, actual_closure_date, updated_at, created_at, observation, comments, root_cause'
       const legacyResponseSelect = 'id, audit_id, checklist_id, result, sub_question_text, audit_location, audit_department, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, closure_status, verification_status, cause_category, monetary_support_required, expected_expense_amount, expense_category, expense_purpose, expense_approval_status, expense_approver_role, quotation_files, is_void, tentative_closing_date, actual_closure_date, updated_at, created_at, observation, comments, root_cause'
-      let responseQuery = client.from('audit_responses').select(stableResponseSelect).order('created_at', { ascending: false })
+
+      function buildResponseQuery(select) {
+        let query = client.from('audit_responses').select(select).order('created_at', { ascending: false })
+        if (departmentFilters.length) query = query.in('audit_department', departmentFilters)
+        if (locationFilters.length) query = query.in('audit_location', locationFilters)
+        if (filters.startDate) query = query.gte('created_at', filters.startDate)
+        if (filters.endDate) query = query.lte('created_at', `${filters.endDate}T23:59:59`)
+        return query
+      }
+
+      const RESPONSE_PAGE_SIZE = 1000
+      async function fetchAllResponsePages(select) {
+        let allRows = []
+        let from = 0
+        for (;;) {
+          const { data, error } = await buildResponseQuery(select).range(from, from + RESPONSE_PAGE_SIZE - 1)
+          if (error) return { data: null, error }
+          allRows = allRows.concat(data || [])
+          if (!data || data.length < RESPONSE_PAGE_SIZE) break
+          from += RESPONSE_PAGE_SIZE
+        }
+        return { data: allRows, error: null }
+      }
+
       let lifecycleQuery = client.from('audit_response_lifecycle_analytics').select('*').order('created_at', { ascending: false })
       let auditQuery = client.from('audits').select('id, audit_no, audit_number, title, location_id, department_id, auditor_id, status, score, scheduled_date, started_at, submitted_at, completed_at, created_at, updated_at')
       let findingQuery = client.from('audit_findings').select('id, audit_response_id, audit_id, checklist_id, location_id, owner_department_id, location_functional_hod_id, current_condition, gap_identified, auditor_comments, risk_level, status, target_date, closed_at, created_at, updated_at')
       let evidenceQuery = client.from('finding_evidence').select('id, finding_id, file_name, mime_type, file_size_bytes, storage_path, uploaded_at, evidence_stage, is_deleted').eq('is_deleted', false)
 
       if (departmentFilters.length) {
-        responseQuery = responseQuery.in('audit_department', departmentFilters)
         lifecycleQuery = lifecycleQuery.in('department', departmentFilters)
       }
 
       if (locationFilters.length) {
-        responseQuery = responseQuery.in('audit_location', locationFilters)
         lifecycleQuery = lifecycleQuery.in('location', locationFilters)
       }
 
@@ -288,7 +308,6 @@ export default function ReportsDashboard() {
       }
 
       if (filters.startDate) {
-        responseQuery = responseQuery.gte('created_at', filters.startDate)
         lifecycleQuery = lifecycleQuery.gte('created_at', filters.startDate)
         auditQuery = auditQuery.gte('created_at', filters.startDate)
         findingQuery = findingQuery.gte('created_at', filters.startDate)
@@ -296,7 +315,6 @@ export default function ReportsDashboard() {
       }
 
       if (filters.endDate) {
-        responseQuery = responseQuery.lte('created_at', `${filters.endDate}T23:59:59`)
         lifecycleQuery = lifecycleQuery.lte('created_at', `${filters.endDate}T23:59:59`)
         auditQuery = auditQuery.lte('created_at', `${filters.endDate}T23:59:59`)
         findingQuery = findingQuery.lte('created_at', `${filters.endDate}T23:59:59`)
@@ -314,14 +332,9 @@ export default function ReportsDashboard() {
         evidenceQuery,
       ])
 
-      responsesResult = await responseQuery
+      responsesResult = await fetchAllResponsePages(stableResponseSelect)
       if (responsesResult.error && /column .* does not exist/i.test(responsesResult.error.message || '')) {
-        let legacyQuery = client.from('audit_responses').select(legacyResponseSelect).order('created_at', { ascending: false })
-        if (departmentFilters.length) legacyQuery = legacyQuery.in('audit_department', departmentFilters)
-        if (locationFilters.length) legacyQuery = legacyQuery.in('audit_location', locationFilters)
-        if (filters.startDate) legacyQuery = legacyQuery.gte('created_at', filters.startDate)
-        if (filters.endDate) legacyQuery = legacyQuery.lte('created_at', `${filters.endDate}T23:59:59`)
-        responsesResult = await legacyQuery
+        responsesResult = await fetchAllResponsePages(legacyResponseSelect)
       }
 
       const anyError = [auditsResult, responsesResult, findingsResult, usersResult, mappingsResult, departmentsResult, locationsResult, evidenceResult].find(result => result.error)
