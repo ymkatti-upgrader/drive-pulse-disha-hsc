@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Building2, ClipboardList, Edit3, MapPin, Plus, Search, Tags, Trash2, Upload, Users } from 'lucide-react'
+import { ArrowLeft, Building2, ClipboardList, Edit3, MapPin, Plus, Search, ShieldCheck, Tags, Trash2, Upload, Users } from 'lucide-react'
 import { PageHeader, StatusBadge } from '../components/UI'
 import { isSuperAdmin, useAuth } from '../auth/AuthContext'
 import { requireSupabase } from '../supabaseClient'
@@ -14,9 +14,24 @@ const masterConfig = {
     fields: [
       ['employee_name', 'Full Name'],
       ['mobile_no', 'Mobile Number', 'tel'],
+      ['user_type', 'Designation / User Type'],
       ['role', 'Role'],
       ['department', 'Department'],
       ['location', 'Location'],
+      ['status', 'Status', 'status'],
+    ],
+  },
+  accessMappings: {
+    label: 'Access Mapping',
+    title: 'Access Mapping',
+    icon: ShieldCheck,
+    description: 'Assign roles and location/function scope to application users.',
+    fields: [
+      ['employee_name', 'User'],
+      ['role', 'Role'],
+      ['department', 'Department'],
+      ['location', 'Location'],
+      ['user_type', 'User Type'],
       ['status', 'Status', 'status'],
     ],
   },
@@ -103,6 +118,77 @@ function MasterEditModal({ title, fields, value, onCancel, onSave }) {
   </div>
 }
 
+const userFields = [
+  { key: 'employee_name', label: 'Employee Name', placeholder: 'Enter employee name', required: true },
+  { key: 'mobile_no', label: 'Mobile Number', placeholder: 'Enter 10-digit mobile number', required: true, type: 'tel', inputMode: 'numeric', pattern: '[0-9]{10}' },
+  { key: 'user_type', label: 'Designation / User Type', placeholder: 'Enter designation or user type' },
+  { key: 'role', label: 'Role', placeholder: 'Select role', required: true, type: 'select', optionKey: 'roles' },
+  { key: 'location', label: 'Location', placeholder: 'Select location', type: 'select', optionKey: 'locations' },
+  { key: 'department', label: 'Department', placeholder: 'Select department', type: 'select', optionKey: 'departments' },
+  { key: 'status', label: 'Status', placeholder: 'Select status', required: true, type: 'select', options: ['Active', 'Inactive'] },
+]
+
+const accessMappingFields = [
+  { key: 'user_id', label: 'User', placeholder: 'Select user', required: true, type: 'user-select' },
+  { key: 'role', label: 'Role', placeholder: 'Select role', required: true, type: 'select', optionKey: 'roles' },
+  { key: 'location', label: 'Location', placeholder: 'Select location', type: 'select', optionKey: 'locations' },
+  { key: 'department', label: 'Department', placeholder: 'Select department', type: 'select', optionKey: 'departments' },
+  { key: 'user_type', label: 'User Type', placeholder: 'Enter user type' },
+  { key: 'status', label: 'Status', placeholder: 'Select status', required: true, type: 'select', options: ['Active', 'Inactive'] },
+]
+
+function StructuredUserModal({ mode, kind, value, options, onCancel, onSave }) {
+  const [form, setForm] = useState(value)
+  const fields = kind === 'accessMappings' ? accessMappingFields : userFields
+  const entityLabel = kind === 'accessMappings' ? 'Access Mapping' : 'User'
+
+  function update(key, nextValue) {
+    setForm(current => ({ ...current, [key]: nextValue }))
+  }
+
+  function renderControl(field) {
+    const common = {
+      id: `${kind}-${field.key}`,
+      name: field.key,
+      value: form[field.key] || '',
+      required: field.required,
+      'aria-required': field.required || undefined,
+      onChange: event => update(field.key, field.type === 'tel' ? event.target.value.replace(/\D/g, '').slice(0, 10) : event.target.value),
+    }
+    if (field.type === 'user-select') {
+      return <select {...common}>
+        <option value="">{field.placeholder}</option>
+        {options.users.map(item => <option key={item.id} value={item.id}>{item.employee_name} (+91 {item.mobile_no})</option>)}
+      </select>
+    }
+    if (field.type === 'select') {
+      const values = field.options || options[field.optionKey] || []
+      return <select {...common}>
+        <option value="">{field.placeholder}</option>
+        {values.map(item => <option key={item} value={item}>{item}</option>)}
+      </select>
+    }
+    return <input {...common} type={field.type || 'text'} inputMode={field.inputMode} pattern={field.pattern} placeholder={field.placeholder} />
+  }
+
+  return <div className="modal-layer">
+    <button className="modal-backdrop" aria-label={`Close ${entityLabel.toLowerCase()} editor`} onClick={onCancel} />
+    <form className="master-modal card user-master-modal" onSubmit={event => { event.preventDefault(); onSave(form) }}>
+      <div className="modal-head">
+        <div><span className="eyebrow">USER ADMINISTRATION</span><h2>{mode === 'create' ? `Create ${entityLabel}` : `Edit ${entityLabel}`}</h2><p>Fields marked <span aria-hidden="true">*</span> are required.</p></div>
+        <button type="button" aria-label="Close" onClick={onCancel}>x</button>
+      </div>
+      <div className="master-form-grid user-master-form-grid">
+        {fields.map(field => <label key={field.key} htmlFor={`${kind}-${field.key}`}>
+          <span className="user-field-label">{field.label}{field.required && <b aria-label="required">*</b>}</span>
+          {renderControl(field)}
+        </label>)}
+      </div>
+      <div className="modal-actions"><button type="button" className="secondary-button" onClick={onCancel}>Cancel</button><button type="submit" className="primary-button">{mode === 'create' ? 'Create' : 'Save Changes'}</button></div>
+    </form>
+  </div>
+}
+
 export default function MasterData() {
   const navigate = useNavigate()
   const { user, sessionToken } = useAuth()
@@ -111,11 +197,14 @@ export default function MasterData() {
   const [saving, setSaving] = useState(false)
   const [data, setData] = useState({
     users: [],
+    accessMappings: [],
     departments: [],
     locations: [],
     checklists: [],
     findings: [],
   })
+  const [lookupOptions, setLookupOptions] = useState({ users: [], roles: [], departments: [], locations: [] })
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const canAdminister = isSuperAdmin(user)
@@ -126,18 +215,19 @@ export default function MasterData() {
     async function load() {
       try {
         const client = requireSupabase()
-        const [departmentsResult, locationsResult, checklistResult, usersResult, mappingsResult] = await Promise.all([
+        const [departmentsResult, locationsResult, rolesResult, checklistResult, usersResult, mappingsResult] = await Promise.all([
           client.from('departments').select('id, name, status'),
           client.from('locations').select('id, code, name, type, visibility'),
+          client.from('roles').select('id, name'),
           client.from('audit_checklist_master').select('id, checklist_code, chapter, question, evidence_required, status'),
           client.from('app_users').select('id, employee_name, mobile_no, active'),
-          client.from('user_access_mappings').select('user_id, role, department, location, user_type, active').eq('active', true),
+          client.from('user_access_mappings').select('id, user_id, role, department, location, user_type, active'),
         ])
 
         if (cancelled) return
 
         const mappingsByUser = new Map()
-        for (const mapping of mappingsResult.data || []) {
+        for (const mapping of (mappingsResult.data || []).filter(item => item.active !== false)) {
           if (!mappingsByUser.has(mapping.user_id)) mappingsByUser.set(mapping.user_id, [])
           mappingsByUser.get(mapping.user_id).push(mapping)
         }
@@ -158,20 +248,37 @@ export default function MasterData() {
             accessRole: uniqueRoles[0] || '',
             accessDepartment: uniqueDepartments[0] || '',
             accessLocation: uniqueLocations[0] || '',
+            user_type: mappings.find(item => item.user_type)?.user_type || '',
             active: mapStatus(user.active),
+            status: mapStatus(user.active),
           }
         })
 
+        const userById = new Map(users.map(item => [item.id, item]))
+        const accessMappings = (mappingsResult.data || []).map(mapping => ({
+          ...mapping,
+          employee_name: userById.get(mapping.user_id)?.employee_name || 'Unknown user',
+          mobile_no: userById.get(mapping.user_id)?.mobile_no || '',
+          status: mapStatus(mapping.active),
+        }))
+
         setData({
           users,
+          accessMappings,
           departments: (departmentsResult.data || []).map(row => ({ id: row.id, name: row.name, status: mapStatus(row.status) })),
           locations: (locationsResult.data || []).map(row => ({ id: row.id, code: row.code, name: row.name, type: row.type, visibility: mapStatus(row.visibility) })),
           checklists: (checklistResult.data || []).map(row => ({ id: row.id, version: row.version, checklist_code: row.checklist_code, chapter: row.chapter, question: row.question, evidence_required: mapStatus(row.evidence_required), status: mapStatus(row.status) })),
           findings: [],
         })
+        setLookupOptions({
+          users,
+          roles: [...new Set([...(rolesResult.data || []).map(row => row.name), ...accessMappings.map(row => row.role)].filter(Boolean))].sort(),
+          departments: [...new Set((departmentsResult.data || []).map(row => row.name).filter(Boolean))].sort(),
+          locations: [...new Set((locationsResult.data || []).flatMap(row => [row.code, row.name]).filter(Boolean))].sort(),
+        })
       } catch (error) {
         if (!cancelled) {
-          setData({ users: [], departments: [], locations: [], checklists: [], findings: [] })
+          setData({ users: [], accessMappings: [], departments: [], locations: [], checklists: [], findings: [] })
           console.error('Master data load failed', error)
         }
       } finally {
@@ -193,12 +300,13 @@ export default function MasterData() {
   function selectMaster(key) {
     setSelected(key)
     setSearch('')
+    setMobileDetailOpen(true)
   }
 
   function openEditor(row = null) {
     if (!canAdminister) return
     const empty = Object.fromEntries(config.fields.map(([key]) => [key, '']))
-    setEditor({ row, value: row ? { ...empty, ...row } : empty })
+    setEditor({ row, mode: row ? 'edit' : 'create', value: row ? { ...empty, ...row } : { ...empty, status: 'Active' } })
   }
 
   function closeEditor() {
@@ -226,6 +334,20 @@ export default function MasterData() {
         })
         if (rpcError) throw rpcError
         if (!rpcData?.success) throw new Error(rpcData?.error || 'Unable to save user.')
+      } else if (selected === 'accessMappings') {
+        const { data: rpcData, error: rpcError } = await client.rpc('admin_upsert_access_mapping', {
+          p_admin_user_id: user?.id,
+          p_admin_session_token: sessionToken,
+          p_mapping_id: form.id || null,
+          p_target_user_id: form.user_id || null,
+          p_role: form.role || '',
+          p_department: form.department || '',
+          p_location: form.location || '',
+          p_user_type: form.user_type || '',
+          p_active: mapStatus(form.status) === 'Active',
+        })
+        if (rpcError) throw rpcError
+        if (!rpcData?.success) throw new Error(rpcData?.error || 'Unable to save access mapping.')
       } else if (selected === 'departments') {
         const result = await client.from('departments').upsert({
           id: form.id || undefined,
@@ -287,6 +409,14 @@ export default function MasterData() {
         })
         if (rpcError) throw rpcError
         if (!rpcData?.success) throw new Error(rpcData?.error || 'Unable to remove user.')
+      } else if (selected === 'accessMappings') {
+        const { data: rpcData, error: rpcError } = await client.rpc('admin_delete_access_mapping', {
+          p_admin_user_id: user?.id,
+          p_admin_session_token: sessionToken,
+          p_mapping_id: row.id,
+        })
+        if (rpcError) throw rpcError
+        if (!rpcData?.success) throw new Error(rpcData?.error || 'Unable to remove access mapping.')
       } else if (selected === 'departments') {
         const result = await client.from('departments').delete().eq('id', row.id)
         if (result.error) throw result.error
@@ -310,7 +440,7 @@ export default function MasterData() {
 
   return <>
     <PageHeader eyebrow="ADMINISTRATION" title="Master Data" description="Manage users, departments, locations and audit standards." />
-    <div className="master-layout">
+    <div className={`master-layout ${mobileDetailOpen ? 'mobile-detail-open' : ''}`}>
       <aside className="card master-nav">
         {Object.entries(masterConfig).map(([key, item]) => {
           const Icon = item.icon
@@ -319,7 +449,7 @@ export default function MasterData() {
       </aside>
 
       <section className="master-workspace">
-        <button className="master-mobile-back" onClick={() => navigate('/dashboard')}><ArrowLeft size={18} /> Back to Dashboard</button>
+        <button className="master-mobile-back" onClick={() => setMobileDetailOpen(false)}><ArrowLeft size={18} /> Back to master list</button>
         <div className="master-head">
           <div><h2>{config.title}</h2><p>{config.description}</p></div>
           <div className="master-head-actions">
@@ -329,9 +459,11 @@ export default function MasterData() {
         </div>
         <div className="master-toolbar"><div className="search-bar"><Search size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={`Search ${config.label.toLowerCase()}`} /></div><span>{filteredRows.length} records</span></div>
 
-        {loading ? <div className="card master-empty"><Search size={30} /><strong>Loading master data...</strong><p>Please wait while backend records are loaded.</p></div> : filteredRows.length ? <div className="card master-data-table"><div className="master-table-scroll"><div className="master-table-grid" style={{ '--cols': config.fields.length, '--table-width': `${Math.max(760, config.fields.length * 150 + 120)}px` }}><div className="master-table-head">{config.fields.map(([, label]) => <span key={label}>{label}</span>)}<span>Actions</span></div>{filteredRows.map(row => <div className="master-table-row" key={row.id}>{config.fields.map(([key, , type]) => <div data-label={config.fields.find(field => field[0] === key)[1]} key={key}>{type === 'status' ? <StatusBadge>{row[key] || '-'}</StatusBadge> : <span>{row[key] || '-'}</span>}</div>)}<div className="row-actions" data-label="Actions"><button disabled={!canAdminister} aria-label="Edit record" onClick={() => canAdminister && openEditor(row)}><Edit3 size={16} /> <span>Edit</span></button><button disabled={!canAdminister} className="delete-action" aria-label="Delete record" onClick={() => canAdminister && deleteRow(row)}><Trash2 size={16} /> <span>Delete</span></button></div></div>)}</div></div></div> : <EmptyState label={config.title} message={selected === 'checklists' ? 'No checklist records found. Please import checklist master.' : 'No records found. Please import master data.'} onAddNew={() => navigate('/masters/import')} />}
+        {loading ? <div className="card master-empty"><Search size={30} /><strong>Loading master data...</strong><p>Please wait while backend records are loaded.</p></div> : filteredRows.length ? <div className="card master-data-table"><div className="master-table-scroll"><div className="master-table-grid" style={{ '--cols': config.fields.length, '--table-width': `${Math.max(760, config.fields.length * 150 + 120)}px` }}><div className="master-table-head">{config.fields.map(([, label]) => <span key={label}>{label}</span>)}<span>Actions</span></div>{filteredRows.map(row => <div className="master-table-row" key={row.id}>{config.fields.map(([key, , type]) => <div data-label={config.fields.find(field => field[0] === key)[1]} key={key}>{type === 'status' ? <StatusBadge>{row[key] || '-'}</StatusBadge> : <span>{row[key] || '-'}</span>}</div>)}<div className="row-actions" data-label="Actions"><button disabled={!canAdminister} aria-label="Edit record" onClick={() => canAdminister && openEditor(row)}><Edit3 size={16} /> <span>Edit</span></button><button disabled={!canAdminister} className="delete-action" aria-label="Delete record" onClick={() => canAdminister && deleteRow(row)}><Trash2 size={16} /> <span>Delete</span></button></div></div>)}</div></div></div> : <EmptyState label={config.title} message={selected === 'checklists' ? 'No checklist records found. Please import checklist master.' : 'No records found. Please import master data.'} onAddNew={() => ['users', 'accessMappings'].includes(selected) ? openEditor() : navigate('/masters/import')} />}
       </section>
     </div>
-    {editor && <MasterEditModal title={`Edit ${config.title}`} fields={config.fields} value={editor.value} onCancel={closeEditor} onSave={saveEditor} />}
+    {editor && (selected === 'users' || selected === 'accessMappings'
+      ? <StructuredUserModal mode={editor.mode} kind={selected} value={editor.value} options={lookupOptions} onCancel={closeEditor} onSave={saveEditor} />
+      : <MasterEditModal title={`${editor.mode === 'create' ? 'Create' : 'Edit'} ${config.title}`} fields={config.fields.map(([key, label, type]) => ({ key, label, type }))} value={editor.value} onCancel={closeEditor} onSave={saveEditor} />)}
   </>
 }

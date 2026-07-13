@@ -16,7 +16,7 @@ const kpis = [
   { key: 'totalMonetaryValueApproved', label: 'Total Monetary Value Approved', icon: Banknote, tone: 'green', currency: true },
 ]
 
-export default function KpiCards({ summary, onSelectKpi, visibleKeys, cards = kpis }) {
+export default function KpiCards({ summary, onSelectKpi, visibleKeys, cards = kpis, activeKey = '' }) {
   const visibleCards = visibleKeys?.length ? cards.filter(card => visibleKeys.includes(card.key)) : cards
   return <section className="report-kpi-grid">
     {visibleCards.map(card => {
@@ -26,12 +26,13 @@ export default function KpiCards({ summary, onSelectKpi, visibleKeys, cards = kp
         : card.duration
           ? formatDurationDays(summary[card.key], card.naLabel || '-')
           : summary[card.key]
-      return <button key={card.key} type="button" className={`card report-kpi ${card.tone}`} onClick={() => onSelectKpi(card)}>
+      const active = activeKey === card.key
+      return <button key={card.key} type="button" className={`card report-kpi ${card.tone}${active ? ' active' : ''}`} aria-pressed={active} onClick={() => onSelectKpi(card)}>
         <div className="report-kpi-icon"><Icon size={18} /></div>
         <div className="report-kpi-copy">
           <span>{card.label}</span>
           <strong>{value}</strong>
-          <small>Click to drill into details</small>
+          <small>{active ? 'Click again to clear' : 'Click to drill down'}</small>
         </div>
       </button>
     })}

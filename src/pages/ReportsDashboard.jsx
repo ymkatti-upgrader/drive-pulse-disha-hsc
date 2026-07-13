@@ -1,5 +1,6 @@
-import { Banknote, Clock3, Download, FileDown, RefreshCcw, ShieldAlert, TimerReset } from 'lucide-react'
+import { ArrowLeft, Banknote, Clock3, Download, FileDown, RefreshCcw, ShieldAlert, TimerReset, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { canAccessScope, getAccessScopeValues, getPrimaryRole, getRoleProfile, useAuth } from '../auth/AuthContext'
 import { PageHeader, StatusBadge } from '../components/UI'
 import { requireSupabase } from '../supabaseClient'
@@ -220,6 +221,7 @@ function ErrorFallback({ error }) {
 }
 
 export default function ReportsDashboard() {
+  const navigate = useNavigate()
   const { user } = useAuth()
   const roleProfile = getRoleProfile(user)
   const [loading, setLoading] = useState(true)
@@ -456,11 +458,18 @@ export default function ReportsDashboard() {
   const pageSize = 8
 
   function handleSelectGroup(label, value) {
-    setFocus({ label, value })
+    setFocus(current => current?.kind === 'group' && current.label === label && current.value === value
+      ? null
+      : { kind: 'group', label, value })
     setTab('executive')
   }
 
   function handleSelectKpi(card) {
+    if (focus?.kind === 'kpi' && focus.key === card.key) {
+      setFocus(null)
+      setPageByTab(current => ({ ...current, executive: 1 }))
+      return
+    }
     const base = filterRows(data.rows, filters)
     let rows = base
     switch (card.key) {
@@ -518,8 +527,9 @@ export default function ReportsDashboard() {
       default:
         rows = base
     }
-    setFocus({ label: card.label, value: card.key, rows })
+    setFocus({ kind: 'kpi', key: card.key, label: card.label, value: card.key, rows })
     setTab('executive')
+    setPageByTab(current => ({ ...current, executive: 1 }))
   }
 
   function handleViewDetails(row) {
@@ -548,6 +558,7 @@ export default function ReportsDashboard() {
       title="DISHA HSC Reports & Analytics"
       description={`Role-based reporting for ${roleName}. ${roleProfile.id === 'group-functional-hod' ? 'Department access is enforced from your access mapping; filters refine the visible scope.' : focus ? `Drill-down: ${focus.label} - ${focus.value}` : 'Click any KPI or chart segment to inspect details.'}`}
       action={<div className="report-page-actions">
+        <button className="secondary-button" type="button" onClick={() => navigate('/dashboard')}><ArrowLeft size={16} /> Back to Dashboard</button>
         <button className="secondary-button" type="button" onClick={loadData} disabled={loading}><RefreshCcw size={16} /> Refresh</button>
         <button className="secondary-button" type="button" onClick={exportSummaryPdf}><FileDown size={16} /> Export Summary PDF</button>
       </div>}
@@ -573,7 +584,7 @@ export default function ReportsDashboard() {
     </section>}
 
     {!loading && <>
-      <KpiCards summary={summary} onSelectKpi={handleSelectKpi} visibleKeys={visibleKpis} />
+      <KpiCards summary={summary} onSelectKpi={handleSelectKpi} visibleKeys={visibleKpis} activeKey={focus?.kind === 'kpi' ? focus.key : ''} />
       <ReportCharts snapshot={snapshot} onSelectGroup={handleSelectGroup} visibleKeys={visibleCharts} />
 
       <section className="card report-drilldown">
@@ -586,7 +597,7 @@ export default function ReportsDashboard() {
         </div>
       </section>
 
-      <KpiCards summary={lifecycleSummary} onSelectKpi={handleSelectKpi} cards={lifecycleKpiConfig} />
+      <KpiCards summary={lifecycleSummary} onSelectKpi={handleSelectKpi} cards={lifecycleKpiConfig} activeKey={focus?.kind === 'kpi' ? focus.key : ''} />
       <ReportCharts snapshot={lifecycleSnapshot} onSelectGroup={handleSelectGroup} charts={lifecycleChartConfig} />
 
       <section className="card report-drilldown">
@@ -597,6 +608,7 @@ export default function ReportsDashboard() {
             <p>{filteredRows.length} row(s) match the current filter set.</p>
           </div>
           <div className="report-drilldown-actions">
+            {focus && <button className="secondary-button report-clear-focus" type="button" onClick={() => setFocus(null)}><X size={16} /> Clear KPI Filter</button>}
             <button className="secondary-button" type="button" onClick={() => exportCurrentExcel(buildTableData(tab, filteredRows, filteredAudits), `${exportTitle}.xlsx`)}><Download size={16} /> Export filtered Excel</button>
             <button className="secondary-button" type="button" onClick={() => exportCurrentCsv(buildTableData(tab, filteredRows, filteredAudits), `${exportTitle}.csv`)}><Download size={16} /> Export filtered CSV</button>
           </div>

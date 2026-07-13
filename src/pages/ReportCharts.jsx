@@ -31,18 +31,30 @@ function BarList({ data, onSelect, valueFormatter = value => value, barClass = '
 
 function DonutList({ data, onSelect }) {
   const total = data.reduce((sum, item) => sum + (Number(item.value) || 0), 0)
+  const colors = ['#eb0a1e', '#f97316', '#3b82f6', '#10b981', '#8b5cf6', '#eab308']
+  let cursor = 0
+  const segments = data.map((item, index) => {
+    const value = Number(item.value) || 0
+    const percent = total ? Math.round((value / total) * 1000) / 10 : 0
+    const start = cursor
+    cursor += total ? (value / total) * 100 : 0
+    return { ...item, value, percent, color: colors[index % colors.length], start, end: cursor }
+  })
+  const background = total
+    ? `conic-gradient(${segments.map(item => `${item.color} ${item.start}% ${item.end}%`).join(', ')})`
+    : '#eef2f6'
   return <div className="report-donut-layout">
-    <div className="report-donut">
+    <div className="report-donut" style={{ background }} role="img" aria-label={`${total} total CAPA items`}>
       <div>
         <strong>{total}</strong>
         <span>Total</span>
       </div>
     </div>
     <div className="report-donut-legend">
-      {data.map(item => <button key={item.label} type="button" onClick={() => onSelect(item)}>
-        <i />
+      {segments.map(item => <button key={item.label} type="button" onClick={() => onSelect(item)} aria-label={`${item.label}: ${item.value}, ${item.percent}%`}>
+        <i style={{ background: item.color }} />
         <span>{item.label}</span>
-        <strong>{item.value}</strong>
+        <strong>{item.value} <small>{item.percent}%</small></strong>
       </button>)}
     </div>
   </div>
