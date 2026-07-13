@@ -33,6 +33,7 @@ function humanizeAuditStatus(status) {
 function mapAuditRow(audit = {}, lookups = {}) {
   const location = lookups.locations?.get(audit.location_id)
   const department = lookups.departments?.get(audit.department_id)
+  const auditFunction = lookups.departments?.get(audit.audit_function_id)
   const auditor = lookups.users?.get(audit.auditor_id)
   return {
     id: audit.id,
@@ -47,6 +48,8 @@ function mapAuditRow(audit = {}, lookups = {}) {
     departmentId: audit.department_id || '',
     department: department?.name || '',
     departments: department?.name ? [department.name] : [],
+    auditFunctionId: audit.audit_function_id || '',
+    auditFunction: auditFunction?.name || 'Not Assigned',
     auditor_id: audit.auditor_id || '',
     auditor_name: auditor?.employee_name || '',
     start_date: audit.scheduled_date || '',
@@ -82,18 +85,23 @@ export function AuditProvider({ children }) {
       if (!supabase) return
       try {
         const client = requireSupabase()
+        const phase2Select = 'id, audit_no, audit_number, title, location_id, department_id, audit_function_id, auditor_id, scheduled_date, started_at, submitted_at, completed_at, status, score, created_by, created_at, updated_at'
         const stableSelect = 'id, audit_no, audit_number, title, location_id, department_id, auditor_id, scheduled_date, started_at, submitted_at, completed_at, status, score, created_by, created_at, updated_at'
         const legacySelect = 'id, audit_no, title, location_id, department_id, auditor_id, scheduled_date, started_at, submitted_at, completed_at, status, score, created_by, created_at, updated_at'
-        let auditsPromise = client.from('audits').select(stableSelect).order('created_at', { ascending: false })
+        let auditsPromise = client.from('audits').select(phase2Select).order('created_at', { ascending: false })
         const [auditsResult, locationsResult, departmentsResult, usersResult] = await Promise.all([
           auditsPromise,
           client.from('locations').select('id, code, name'),
           client.from('departments').select('id, name'),
           client.from('app_users').select('id, employee_name'),
         ])
-        const finalAuditsResult = auditsResult.error && /column .* does not exist/i.test(auditsResult.error.message || '')
-          ? await client.from('audits').select(legacySelect).order('created_at', { ascending: false })
-          : auditsResult
+        let finalAuditsResult = auditsResult
+        if (finalAuditsResult.error && /column .* does not exist/i.test(finalAuditsResult.error.message || '')) {
+          finalAuditsResult = await client.from('audits').select(stableSelect).order('created_at', { ascending: false })
+        }
+        if (finalAuditsResult.error && /column .* does not exist/i.test(finalAuditsResult.error.message || '')) {
+          finalAuditsResult = await client.from('audits').select(legacySelect).order('created_at', { ascending: false })
+        }
         const anyError = [finalAuditsResult, locationsResult, departmentsResult, usersResult].find(result => result.error)
         if (anyError?.error) throw anyError.error
 

@@ -80,6 +80,7 @@ export default function ReportTables({
               <th>Audit Name</th>
               <th onClick={() => handleSort('location')}>Location</th>
               <th onClick={() => handleSort('department')}>Department</th>
+              <th onClick={() => handleSort('auditFunction')}>Audit Function</th>
               <th onClick={() => handleSort('question')}>Question</th>
               <th onClick={() => handleSort('pic')}>PIC</th>
               <th>Assigned Date</th>
@@ -97,6 +98,7 @@ export default function ReportTables({
               <th onClick={() => handleSort('auditId')}>Audit Number</th>
               <th onClick={() => handleSort('location')}>Location</th>
               <th onClick={() => handleSort('department')}>Department</th>
+              <th onClick={() => handleSort('auditFunction')}>Audit Function</th>
               <th onClick={() => handleSort('question')}>Question</th>
               <th onClick={() => handleSort('pic')}>PIC</th>
               <th onClick={() => handleSort('status')}>Status</th>
@@ -113,6 +115,7 @@ export default function ReportTables({
               <td>{row.auditTitle || '-'}</td>
               <td>{row.location || '-'}</td>
               <td>{row.department || '-'}</td>
+              <td>{row.auditFunction || 'Not Assigned'}</td>
               <td>
                 <strong>{row.question || '-'}</strong>
                 <small>{row.result || '-'}</small>
@@ -141,6 +144,7 @@ export default function ReportTables({
               </td>
               <td>{row.location || '-'}</td>
               <td>{row.department || '-'}</td>
+              <td>{row.auditFunction || 'Not Assigned'}</td>
               <td>
                 <strong>{row.question || '-'}</strong>
                 <small>{row.result || '-'}</small>

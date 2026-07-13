@@ -46,6 +46,7 @@ export default function ReportFilters({ value, options, onChange, onRefresh, loa
       </label>}
       {show('location') && <SelectField label="Location" value={value.location} onChange={handleChange('location')} options={options.locations} disabled={isLocked('location')} />}
       {show('department') && <SelectField label="Department" value={value.department} onChange={handleChange('department')} options={options.departments} disabled={isLocked('department')} />}
+      {show('auditFunction') && <SelectField label="Audit Function" value={value.auditFunction} onChange={handleChange('auditFunction')} options={options.auditFunctions} disabled={isLocked('auditFunction')} />}
       {show('auditType') && <SelectField label="Audit type" value={value.auditType} onChange={handleChange('auditType')} options={options.auditTypes} disabled={isLocked('auditType')} />}
       {show('auditor') && <SelectField label="Auditor" value={value.auditor} onChange={handleChange('auditor')} options={options.auditors} disabled={isLocked('auditor')} />}
       {show('pic') && <SelectField label="PIC" value={value.pic} onChange={handleChange('pic')} options={options.pics} disabled={isLocked('pic')} />}

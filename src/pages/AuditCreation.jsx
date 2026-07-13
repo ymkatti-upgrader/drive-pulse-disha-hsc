@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, Calendar, ChevronRight, Plus, Save, UserRound } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAudits, isInProgressAuditStatus } from '../audits/AuditContext'
-import { canAccessAuditModule, canManageDishaWorkflow, filterByUserAccess, isSystemAdmin, useAuth } from '../auth/AuthContext'
+import { canAccessAuditModule, canManageDishaWorkflow, filterByUserAccess, getUserAccess, isSystemAdmin, useAuth } from '../auth/AuthContext'
 import { DataRow, PageHeader, StatusBadge, Stepper } from '../components/UI'
 import { requireSupabase } from '../supabaseClient'
 
@@ -58,6 +58,25 @@ function buildAuditorOptions(users, mappingsByUser) {
     })))
 }
 
+function buildAuditFunctionOptions(departments, user, canSeeAllWorkflowData) {
+  const active = (departments || [])
+    .filter(item => normalizedText(item.status) === 'active')
+    .map(item => ({ id: item.id, value: item.id, label: item.name || item.id }))
+
+  if (canSeeAllWorkflowData || isSystemAdmin(user)) return active
+
+  const scope = [...new Set(getUserAccess(user).map(item => normalizedText(item.department)).filter(Boolean))]
+  if (!scope.length || scope.some(value => ['all', 'group'].includes(value))) return active
+
+  const scopeAliases = new Set(scope.flatMap(value => {
+    const withoutPrefix = value.replace(/^dctc\s*-\s*/i, '')
+    const withoutAccounts = withoutPrefix.replace(/\s*&\s*accounts$/i, '').trim()
+    return [value, withoutPrefix, withoutAccounts].filter(Boolean)
+  }))
+
+  return active.filter(option => scopeAliases.has(normalizedText(option.label)))
+}
+
 export default function AuditCreation() {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -67,6 +86,7 @@ export default function AuditCreation() {
   const canEditAudit = canAccessAuditModule(user) || isSystemAdmin(user)
   const [auditorOptions, setAuditorOptions] = useState([])
   const [locationOptions, setLocationOptions] = useState([])
+  const [auditFunctionOptions, setAuditFunctionOptions] = useState([])
   const [validationError, setValidationError] = useState('')
   const [savingAudit, setSavingAudit] = useState(false)
   const [auditId, setAuditId] = useState('')
@@ -75,6 +95,7 @@ export default function AuditCreation() {
     locationId: '',
     auditorId: '',
     startDate: new Date().toISOString().slice(0, 10),
+    auditFunctionId: '',
   })
 
   useEffect(() => {
@@ -86,6 +107,7 @@ export default function AuditCreation() {
         locationId: stored.locationId || current.locationId,
         auditorId: stored.auditorId || current.auditorId,
         startDate: stored.startDate || current.startDate,
+        auditFunctionId: stored.auditFunctionId || current.auditFunctionId,
       }))
     } catch {
       // ignore malformed local draft
@@ -98,14 +120,16 @@ export default function AuditCreation() {
     async function loadAuditors() {
       try {
         const client = requireSupabase()
-        const [usersResult, mappingsResult, locationsResult] = await Promise.all([
+        const [usersResult, mappingsResult, locationsResult, departmentsResult] = await Promise.all([
           client.from('app_users').select('id, employee_name, mobile_no, active'),
           client.from('user_access_mappings').select('user_id, role, department, location, user_type, active').eq('active', true),
           client.from('locations').select('id, code, name, visibility').order('code', { ascending: true }),
+          client.from('departments').select('id, name, status').order('name', { ascending: true }),
         ])
         if (usersResult.error) throw usersResult.error
         if (mappingsResult.error) throw mappingsResult.error
         if (locationsResult.error) throw locationsResult.error
+        if (departmentsResult.error) throw departmentsResult.error
 
         const mappingsByUser = new Map()
         for (const mapping of mappingsResult.data || []) {
@@ -122,11 +146,13 @@ export default function AuditCreation() {
             label: [item.code, item.name].filter(Boolean).join(' - ') || item.name || item.code || item.id,
             name: item.name || item.code || '',
           })))
+          setAuditFunctionOptions(buildAuditFunctionOptions(departmentsResult.data || [], user, canSeeAllWorkflowData))
         }
       } catch (error) {
         if (!cancelled) {
           setAuditorOptions([])
           setLocationOptions([])
+          setAuditFunctionOptions([])
         }
         console.error('Unable to load auditor options', error)
       }
@@ -136,7 +162,7 @@ export default function AuditCreation() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [canSeeAllWorkflowData, user])
 
   useEffect(() => {
     if (!user?.id || form.auditorId) return
@@ -147,6 +173,7 @@ export default function AuditCreation() {
 
   const selectedAuditor = auditorOptions.find(option => option.value === form.auditorId) || null
   const selectedLocation = locationOptions.find(option => option.value === form.locationId) || null
+  const selectedAuditFunction = auditFunctionOptions.find(option => option.value === form.auditFunctionId) || null
 
   async function saveAuditRecord(nextStatus) {
     if (!canEditAudit || savingAudit) return null
@@ -154,6 +181,7 @@ export default function AuditCreation() {
     if (!form.locationId) issues.push('Location is required.')
     if (!form.auditorId) issues.push('Auditor name is required.')
     if (!form.startDate) issues.push('Audit start date is required.')
+    if (!form.auditFunctionId) issues.push('Audit function is required.')
     if (issues.length) {
       setValidationError(issues[0])
       return null
@@ -173,6 +201,7 @@ export default function AuditCreation() {
           p_auditor_id: form.auditorId,
           p_scheduled_date: form.startDate,
           p_created_by: user.id,
+          p_audit_function_id: form.auditFunctionId,
           p_status: nextStatus === 'In Progress' ? 'in_progress' : 'scheduled',
         })
         if (error) throw error
@@ -184,11 +213,12 @@ export default function AuditCreation() {
             title: AUDIT_TYPE,
             location_id: form.locationId,
             auditor_id: form.auditorId,
+            audit_function_id: form.auditFunctionId,
             scheduled_date: form.startDate,
             status: nextStatus === 'In Progress' ? 'in_progress' : 'scheduled',
           })
           .eq('id', auditId)
-          .select('id, audit_no, audit_number, title, location_id, department_id, auditor_id, scheduled_date, status, score, created_at, updated_at')
+          .select('id, audit_no, audit_number, title, location_id, department_id, audit_function_id, auditor_id, scheduled_date, status, score, created_at, updated_at')
           .single()
         if (error) throw error
         savedAudit = data
@@ -201,6 +231,7 @@ export default function AuditCreation() {
         locationId: form.locationId,
         auditorId: form.auditorId,
         startDate: form.startDate,
+        auditFunctionId: form.auditFunctionId,
         savedAt: new Date().toISOString(),
       }))
       createAudit({
@@ -213,6 +244,8 @@ export default function AuditCreation() {
         title: AUDIT_TYPE,
         locationId: form.locationId,
         location: selectedLocation?.name || selectedLocation?.label || '',
+        auditFunctionId: form.auditFunctionId,
+        auditFunction: selectedAuditFunction?.label || 'Not Assigned',
         auditor_id: selectedAuditor?.value || '',
         auditor_name: selectedAuditor?.label || '',
         start_date: form.startDate,
@@ -252,6 +285,7 @@ export default function AuditCreation() {
       locationId: '',
       auditorId: '',
       startDate: new Date().toISOString().slice(0, 10),
+      auditFunctionId: '',
     })
   }
 
@@ -268,6 +302,7 @@ export default function AuditCreation() {
         item.audit_type,
         item.title,
         item.location,
+        item.auditFunction,
       ].some(value => String(value || '').toLowerCase().includes(query)))
       : scopedAudits
   }, [scopedAudits, search])
@@ -294,6 +329,12 @@ export default function AuditCreation() {
           <label className="wide">Audit Start Date
             <div className="input-icon audit-creation-icon-field audit-creation-date-field"><Calendar size={17} /><input type="date" value={form.startDate} onChange={event => setForm(current => ({ ...current, startDate: event.target.value }))} /></div>
           </label>
+          <label className="wide">Audit Function <span aria-hidden="true">*</span>
+            <select required value={form.auditFunctionId} onChange={event => setForm(current => ({ ...current, auditFunctionId: event.target.value }))}>
+              <option value="">Select audit function</option>
+              {auditFunctionOptions.map(item => <option key={item.id} value={item.value}>{item.label}</option>)}
+            </select>
+          </label>
           <label className="wide">Auditor Name
             <div className="input-icon audit-creation-icon-field"><UserRound size={17} /><select value={form.auditorId} onChange={event => setForm(current => ({ ...current, auditorId: event.target.value }))}><option value="">Select auditor</option>{auditorOptions.map(item => <option key={item.id} value={item.value}>{item.label}</option>)}</select></div>
           </label>
@@ -306,7 +347,7 @@ export default function AuditCreation() {
         <div className="card data-list">
           {rows.map(a => {
             const title = a.audit_type || a.title || AUDIT_TYPE
-            const subtitle = [a.location, a.start_date || a.date].filter(Boolean).join(' - ')
+            const subtitle = [a.location, a.auditFunction || 'Not Assigned', a.start_date || a.date].filter(Boolean).join(' - ')
             const canDelete = isSystemAdmin(user) && isInProgressAuditStatus(a.status)
             return <DataRow key={a.id} title={title} subtitle={`${a.auditNumber || a.auditId || a.id} - ${subtitle || 'No details'}`} meta={a.score ? `${a.score}%` : null} status={a.status} onClick={() => navigate(`/audits/${a.id}/conduct`)} onDelete={canDelete ? () => handleDeleteAudit(a.id) : undefined} />
           })}

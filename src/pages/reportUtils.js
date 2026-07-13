@@ -199,6 +199,7 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
       const auditLocation = row.audit_location || locationMap.get(audit.location_id)?.name || locationMap.get(audit.location_id)?.code || ''
       const auditLocationCode = locationMap.get(audit.location_id)?.code || ''
       const auditDepartment = row.audit_department || departmentMap.get(audit.department_id)?.name || ''
+      const auditFunction = departmentMap.get(audit.audit_function_id)?.name || 'Not Assigned'
       const auditor = userMap.get(audit.auditor_id)?.employee_name || audit.auditor_name || ''
       const pic = row.pic_for_ng_name
         || userMap.get(row.assigned_pic_user_id)?.employee_name
@@ -255,6 +256,8 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
         location: auditLocation || '',
         locationCode: auditLocationCode,
         department: auditDepartment || '',
+        auditFunctionId: audit.audit_function_id || '',
+        auditFunction,
         auditor,
         auditorId: audit.auditor_id || '',
         question: row.sub_question_text || '',
@@ -316,6 +319,7 @@ export function filterRows(rows, filters = {}) {
   const endDate = toFilterDate(filters.endDate, true)
   const location = normalizedText(filters.location)
   const department = normalizedText(filters.department)
+  const auditFunction = normalizedText(filters.auditFunction)
   const auditType = normalizedText(filters.auditType)
   const auditor = normalizedText(filters.auditor)
   const pic = normalizedText(filters.pic)
@@ -331,6 +335,7 @@ export function filterRows(rows, filters = {}) {
     if (endDate && createdAt && createdAt > endDate) return false
     if (location && normalizedText(row.location) !== location) return false
     if (department && normalizedText(row.department) !== department) return false
+    if (auditFunction && normalizedText(row.auditFunction) !== auditFunction) return false
     if (auditType && normalizedText(row.auditType) !== auditType) return false
     if (auditor && normalizedText(row.auditor) !== auditor) return false
     if (pic && normalizedText(row.pic) !== pic) return false
@@ -346,6 +351,7 @@ export function filterRows(rows, filters = {}) {
         row.auditType,
         row.location,
         row.department,
+        row.auditFunction,
         row.auditor,
         row.pic,
         row.question,
@@ -369,6 +375,7 @@ export function sortRows(rows, sortKey, sortDirection = 'desc') {
       case 'auditId': return row.auditId
       case 'location': return row.location
       case 'department': return row.department
+      case 'auditFunction': return row.auditFunction
       case 'question': return row.question
       case 'pic': return row.pic
       case 'status': return row.currentStage || row.status

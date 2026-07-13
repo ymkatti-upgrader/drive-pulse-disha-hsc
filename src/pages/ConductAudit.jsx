@@ -152,6 +152,8 @@ function mapRouteAuditRow(audit = {}, lookups = {}) {
     departmentId: audit.department_id || '',
     department: lookups.department?.name || '',
     departments: lookups.department?.name ? [lookups.department.name] : [],
+    auditFunctionId: audit.audit_function_id || '',
+    auditFunction: lookups.auditFunction?.name || 'Not Assigned',
     auditor_id: audit.auditor_id || '',
     auditor_name: lookups.auditor?.employee_name || '',
     start_date: audit.scheduled_date || '',
@@ -444,14 +446,14 @@ function Gauge({ value }) {
   </div>
 }
 
-function ReviewSnapshot({ groups, activeGroup, onJumpToDq }) {
+function ReviewSnapshot({ groups, activeGroup, onJumpToDq, auditFunction }) {
   return <section className="audit-review-panel card">
     <div className="audit-review-head">
       <div>
         <span>Review Audit</span>
         <h2>Snapshot of all DQ questions</h2>
       </div>
-      <small>{groups.length} DQ groups</small>
+      <small>Audit Function: {auditFunction || 'Not Assigned'} | {groups.length} DQ groups</small>
     </div>
     <div className="audit-review-list">
       {groups.map(group => (
@@ -627,11 +629,21 @@ export default function ConductAudit() {
 
       try {
         const client = requireSupabase()
-        const { data: auditRow, error: auditError } = await client
+        let auditResult = await client
           .from('audits')
-          .select('id, audit_no, audit_number, title, location_id, department_id, auditor_id, scheduled_date, started_at, submitted_at, completed_at, status, score, created_by, created_at, updated_at')
+          .select('id, audit_no, audit_number, title, location_id, department_id, audit_function_id, auditor_id, scheduled_date, started_at, submitted_at, completed_at, status, score, created_by, created_at, updated_at')
           .eq('id', routeAuditId)
           .maybeSingle()
+
+        if (auditResult.error && /column .* does not exist/i.test(auditResult.error.message || '')) {
+          auditResult = await client
+            .from('audits')
+            .select('id, audit_no, audit_number, title, location_id, department_id, auditor_id, scheduled_date, started_at, submitted_at, completed_at, status, score, created_by, created_at, updated_at')
+            .eq('id', routeAuditId)
+            .maybeSingle()
+        }
+
+        const { data: auditRow, error: auditError } = auditResult
 
         if (auditError) throw auditError
 
@@ -650,9 +662,12 @@ export default function ConductAudit() {
           return
         }
 
-        const [departmentResult, locationResult, auditorResult] = await Promise.all([
+        const [departmentResult, auditFunctionResult, locationResult, auditorResult] = await Promise.all([
           auditRow.department_id
             ? client.from('departments').select('id, name').eq('id', auditRow.department_id).maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
+          auditRow.audit_function_id
+            ? client.from('departments').select('id, name').eq('id', auditRow.audit_function_id).maybeSingle()
             : Promise.resolve({ data: null, error: null }),
           auditRow.location_id
             ? client.from('locations').select('id, code, name').eq('id', auditRow.location_id).maybeSingle()
@@ -663,12 +678,14 @@ export default function ConductAudit() {
         ])
 
         if (departmentResult.error) console.warn('[ConductAudit] department lookup failed', departmentResult.error)
+        if (auditFunctionResult.error) console.warn('[ConductAudit] audit function lookup failed', auditFunctionResult.error)
         if (locationResult.error) console.warn('[ConductAudit] location lookup failed', locationResult.error)
         if (auditorResult.error) console.warn('[ConductAudit] auditor lookup failed', auditorResult.error)
 
         if (!cancelled) {
           setRouteAudit(mapRouteAuditRow(auditRow, {
             department: departmentResult.data,
+            auditFunction: auditFunctionResult.data,
             location: locationResult.data,
             auditor: auditorResult.data,
           }))
@@ -1404,6 +1421,7 @@ export default function ConductAudit() {
         <button className="back-button" onClick={() => navigate('/audits/new')}><ChevronLeft size={18} /> Exit audit</button>
         <div className="audit-progress-header-copy audit-progress-header-copy--featured">
           <small>{currentAudit?.auditNumber || currentAudit?.auditId || currentAudit?.id || 'Audit reference pending'}</small>
+          <small>Audit Function: {currentAudit?.auditFunction || 'Not Assigned'}</small>
           <span>Current DQ</span>
           <strong>{currentDqLabel} / {currentDqTotalLabel}</strong>
           {isReadOnly && <small>Read-only View</small>}
@@ -1450,7 +1468,7 @@ export default function ConductAudit() {
           <span>DQ Page</span>
           <h2>{activeGroup?.code || 'DQ'} {activeGroup ? `- ${activeGroup.title}` : ''}</h2>
         </div>
-        <small>{currentDqIndex >= 0 ? `Page ${currentDqIndex + 1} of ${dqGroups.length}` : `Page 1 of ${dqGroups.length || 1}`}</small>
+        <small>Audit Function: {currentAudit?.auditFunction || 'Not Assigned'} | {currentDqIndex >= 0 ? `Page ${currentDqIndex + 1} of ${dqGroups.length}` : `Page 1 of ${dqGroups.length || 1}`}</small>
       </div>
 
       <div className="audit-question-grid">
@@ -1543,7 +1561,7 @@ export default function ConductAudit() {
       })}
     </section>
 
-    {isReviewMode && <ReviewSnapshot groups={dqGroups} activeGroup={activeGroup} onJumpToDq={code => backToAudit(code)} />}
+    {isReviewMode && <ReviewSnapshot groups={dqGroups} activeGroup={activeGroup} onJumpToDq={code => backToAudit(code)} auditFunction={currentAudit?.auditFunction} />}
 
     <section className="audit-footer card">
       <div className="audit-footer-status">

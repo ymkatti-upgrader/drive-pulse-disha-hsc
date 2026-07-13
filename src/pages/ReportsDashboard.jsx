@@ -16,6 +16,7 @@ const emptyFilters = {
   endDate: '',
   location: '',
   department: '',
+  auditFunction: '',
   auditType: '',
   auditor: '',
   pic: '',
@@ -126,6 +127,7 @@ function groupSummaryRows(audits = []) {
     auditScore: item.auditScore,
     location: item.location,
     department: item.department,
+    auditFunction: item.auditFunction,
     auditor: item.auditor,
     status: item.auditStatus || item.status,
     targetDate: item.targetDate,
@@ -190,6 +192,7 @@ function buildFilterOptions(rows, audits) {
   return {
     locations: buildOptions(rows, row => row.location || ''),
     departments: buildOptions(rows, row => row.department || ''),
+    auditFunctions: buildOptions(rows, row => row.auditFunction || ''),
     auditTypes: buildOptions(audits, row => row.auditType || ''),
     auditors: buildOptions(audits, row => row.auditor || ''),
     pics: buildOptions(rows, row => row.pic || ''),
@@ -209,7 +212,7 @@ function buildSelectedRows(rows, filters, focus) {
   if (focus?.rows) return filterRows(focus.rows, filters)
   if (!focus) return filtered
   const needle = String(focus.value || '').toLowerCase()
-  return filtered.filter(row => [row.location, row.department, row.auditType, row.auditor, row.pic, row.status, row.severity, row.rootCauseCategory, row.question].some(value => String(value || '').toLowerCase().includes(needle)))
+  return filtered.filter(row => [row.location, row.department, row.auditFunction, row.auditType, row.auditor, row.pic, row.status, row.severity, row.rootCauseCategory, row.question].some(value => String(value || '').toLowerCase().includes(needle)))
 }
 
 function ErrorFallback({ error }) {
@@ -277,7 +280,7 @@ export default function ReportsDashboard() {
       }
 
       let lifecycleQuery = client.from('audit_response_lifecycle_analytics').select('*').order('created_at', { ascending: false })
-      let auditQuery = client.from('audits').select('id, audit_no, audit_number, title, location_id, department_id, auditor_id, status, score, scheduled_date, started_at, submitted_at, completed_at, created_at, updated_at')
+      let auditQuery = client.from('audits').select('id, audit_no, audit_number, title, location_id, department_id, audit_function_id, auditor_id, status, score, scheduled_date, started_at, submitted_at, completed_at, created_at, updated_at')
       let findingQuery = client.from('audit_findings').select('id, audit_response_id, audit_id, checklist_id, location_id, owner_department_id, location_functional_hod_id, current_condition, gap_identified, auditor_comments, risk_level, status, target_date, closed_at, created_at, updated_at')
       let evidenceQuery = client.from('finding_evidence').select('id, finding_id, file_name, mime_type, file_size_bytes, storage_path, uploaded_at, evidence_stage, is_deleted').eq('is_deleted', false)
 
@@ -304,7 +307,7 @@ export default function ReportsDashboard() {
       }
 
       let responsesResult
-      const [auditsResult, findingsResult, usersResult, mappingsResult, departmentsResult, locationsResult, evidenceResult] = await Promise.all([
+      const [initialAuditsResult, findingsResult, usersResult, mappingsResult, departmentsResult, locationsResult, evidenceResult] = await Promise.all([
         auditQuery,
         findingQuery,
         client.from('app_users').select('id, employee_name, mobile_no, active'),
@@ -313,6 +316,14 @@ export default function ReportsDashboard() {
         Promise.resolve({ data: locationsLookupResult.data, error: null }),
         evidenceQuery,
       ])
+
+      let auditsResult = initialAuditsResult
+      if (auditsResult.error && /column .* does not exist/i.test(auditsResult.error.message || '')) {
+        let legacyAuditQuery = client.from('audits').select('id, audit_no, audit_number, title, location_id, department_id, auditor_id, status, score, scheduled_date, started_at, submitted_at, completed_at, created_at, updated_at')
+        if (filters.startDate) legacyAuditQuery = legacyAuditQuery.gte('created_at', dateBoundaryIso(filters.startDate))
+        if (filters.endDate) legacyAuditQuery = legacyAuditQuery.lte('created_at', dateBoundaryIso(filters.endDate, true))
+        auditsResult = await legacyAuditQuery
+      }
 
       responsesResult = await fetchAllResponsePages(stableResponseSelect)
       if (responsesResult.error && /column .* does not exist/i.test(responsesResult.error.message || '')) {
@@ -348,6 +359,7 @@ export default function ReportsDashboard() {
           title: row.title,
           location_id: row.location_id,
           department_id: row.department_id,
+          audit_function_id: row.audit_function_id,
           auditor_id: row.auditor_id,
         })),
         responses: responsesResult.data || [],
@@ -572,7 +584,7 @@ export default function ReportsDashboard() {
       loading={loading}
       lastRefreshed={lastRefreshed}
       visibleFields={roleProfile.id === 'group-functional-hod'
-        ? ['startDate', 'endDate', 'location', 'department', 'pic', 'status', 'severity', 'rootCauseCategory', 'search']
+        ? ['startDate', 'endDate', 'location', 'department', 'auditFunction', 'pic', 'status', 'severity', 'rootCauseCategory', 'search']
         : undefined}
     />
 
@@ -655,6 +667,7 @@ export default function ReportsDashboard() {
         </div>
         <div className="report-detail-grid">
           <div><span>Question</span><strong>{detailRow.question || '-'}</strong></div>
+          <div><span>Audit Function</span><strong>{detailRow.auditFunction || 'Not Assigned'}</strong></div>
           <div><span>PIC</span><strong>{detailRow.pic || '-'}</strong></div>
           <div><span>Status</span><StatusBadge>{detailRow.status || '-'}</StatusBadge></div>
           <div><span>Due Date</span><strong>{formatDate(detailRow.targetDate)}</strong></div>
