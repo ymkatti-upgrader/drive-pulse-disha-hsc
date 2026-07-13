@@ -1,13 +1,13 @@
 import { Banknote, Clock3, Download, FileDown, RefreshCcw, ShieldAlert, TimerReset } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { canAccessScope, canManageDishaWorkflow, canViewReports, getAccessScopeValues, getPrimaryRole, getRoleProfile, useAuth } from '../auth/AuthContext'
+import { canAccessScope, getAccessScopeValues, getPrimaryRole, getRoleProfile, useAuth } from '../auth/AuthContext'
 import { PageHeader, StatusBadge } from '../components/UI'
 import { requireSupabase } from '../supabaseClient'
 import KpiCards from './KpiCards'
 import ReportCharts from './ReportCharts'
 import ReportFilters from './ReportFilters'
 import ReportTables from './ReportTables'
-import { buildDashboardSnapshot, buildLifecycleSnapshot, buildLifecycleSummary, buildReportRows, buildSummary, filterRows, formatDate, formatDateTime, sortRows } from './reportUtils'
+import { buildDashboardSnapshot, buildLifecycleSnapshot, buildLifecycleSummary, buildReportRows, buildSummary, filterRows, formatDate, formatDateTime } from './reportUtils'
 import { exportDashboardSummaryPdf, exportRowsToCsv, exportRowsToExcel } from './exportUtils'
 
 const emptyFilters = {
@@ -65,11 +65,30 @@ function defaultDate(daysAgo = 180) {
   return date.toISOString().slice(0, 10)
 }
 
-function accessibleRow(user, row) {
+function dateBoundaryIso(value, endOfDay = false) {
+  if (!value) return ''
+  const [year, month, day] = String(value).split('-').map(Number)
+  if (!year || !month || !day) return value
+  return new Date(year, month - 1, day, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0).toISOString()
+}
+
+function departmentScopeAliases(value) {
+  const department = String(value || '').trim()
+  if (!department) return []
+  const aliases = [department]
+  const withoutAccounts = department.replace(/\s*&\s*accounts$/i, '').trim()
+  if (withoutAccounts && withoutAccounts !== department) aliases.push(withoutAccounts)
+  aliases.push(`DCTC - ${withoutAccounts || department}`)
+  return [...new Set(aliases)]
+}
+
+function accessibleRow(user, row, roleProfileId) {
   if (!row) return false
-  const scope = { department: row.department, location: row.location }
-  if (canManageDishaWorkflow(user) || canViewReports(user)) return canAccessScope(user, scope)
-  return canAccessScope(user, scope)
+  if (['system-admin', 'ceo', 'group-disha'].includes(roleProfileId)) return true
+  return canAccessScope(user, {
+    department: departmentScopeAliases(row.department),
+    location: [row.location, row.locationCode].filter(Boolean),
+  })
 }
 
 function getVisibleTabs(roleProfileId) {
@@ -218,25 +237,12 @@ export default function ReportsDashboard() {
   const roleName = getPrimaryRole(user)
   const scopedDepartments = useMemo(() => getScopedDepartments(user, roleProfile.id), [roleProfile.id, user])
   const scopedLocations = useMemo(() => getScopedLocations(user), [user])
-  const departmentLocked = roleProfile.id === 'group-functional-hod' && scopedDepartments.length <= 1
-
-  useEffect(() => {
-    if (roleProfile.id !== 'group-functional-hod') return
-    if (!scopedDepartments.length) return
-    setFilters(current => {
-      const validCurrent = current.department && scopedDepartments.some(item => String(item).toLowerCase() === String(current.department).toLowerCase())
-      if (validCurrent) return current
-      return { ...current, department: scopedDepartments[0] }
-    })
-  }, [roleProfile.id, scopedDepartments])
 
   async function loadData() {
     setLoading(true)
     setError('')
     try {
       const client = requireSupabase()
-      const departmentFilters = scopedDepartments
-      const locationFilters = scopedLocations
       const [departmentsLookupResult, locationsLookupResult] = await Promise.all([
         client.from('departments').select('id, name, status'),
         client.from('locations').select('id, code, name, type, visibility'),
@@ -244,29 +250,13 @@ export default function ReportsDashboard() {
       if (departmentsLookupResult.error) throw departmentsLookupResult.error
       if (locationsLookupResult.error) throw locationsLookupResult.error
 
-      const allowedDepartmentIds = departmentFilters.length
-        ? (departmentsLookupResult.data || [])
-          .filter(item => departmentFilters.some(value => String(value).trim().toLowerCase() === String(item.name || '').trim().toLowerCase()))
-          .map(item => item.id)
-        : []
-      const allowedLocationIds = locationFilters.length
-        ? (locationsLookupResult.data || [])
-          .filter(item => locationFilters.some(value => {
-            const needle = String(value).trim().toLowerCase()
-            return needle === String(item.name || '').trim().toLowerCase() || needle === String(item.code || '').trim().toLowerCase()
-          }))
-          .map(item => item.id)
-        : []
-
       const stableResponseSelect = 'id, audit_id, audit_uuid, checklist_id, result, sub_question_text, audit_location, audit_department, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, closure_status, verification_status, cause_category, monetary_support_required, expected_expense_amount, expense_category, expense_purpose, expense_approval_status, expense_approver_role, quotation_files, is_void, tentative_closing_date, actual_closure_date, updated_at, created_at, observation, comments, root_cause'
       const legacyResponseSelect = 'id, audit_id, checklist_id, result, sub_question_text, audit_location, audit_department, assigned_pic_user_id, pic_for_ng_user_id, pic_for_ng_name, pic_for_ng_mobile, action_status, closure_status, verification_status, cause_category, monetary_support_required, expected_expense_amount, expense_category, expense_purpose, expense_approval_status, expense_approver_role, quotation_files, is_void, tentative_closing_date, actual_closure_date, updated_at, created_at, observation, comments, root_cause'
 
       function buildResponseQuery(select) {
         let query = client.from('audit_responses').select(select).order('created_at', { ascending: false })
-        if (departmentFilters.length) query = query.in('audit_department', departmentFilters)
-        if (locationFilters.length) query = query.in('audit_location', locationFilters)
-        if (filters.startDate) query = query.gte('created_at', filters.startDate)
-        if (filters.endDate) query = query.lte('created_at', `${filters.endDate}T23:59:59`)
+        if (filters.startDate) query = query.gte('created_at', dateBoundaryIso(filters.startDate))
+        if (filters.endDate) query = query.lte('created_at', dateBoundaryIso(filters.endDate, true))
         return query
       }
 
@@ -289,36 +279,26 @@ export default function ReportsDashboard() {
       let findingQuery = client.from('audit_findings').select('id, audit_response_id, audit_id, checklist_id, location_id, owner_department_id, location_functional_hod_id, current_condition, gap_identified, auditor_comments, risk_level, status, target_date, closed_at, created_at, updated_at')
       let evidenceQuery = client.from('finding_evidence').select('id, finding_id, file_name, mime_type, file_size_bytes, storage_path, uploaded_at, evidence_stage, is_deleted').eq('is_deleted', false)
 
-      if (departmentFilters.length) {
-        lifecycleQuery = lifecycleQuery.in('department', departmentFilters)
-      }
-
-      if (locationFilters.length) {
-        lifecycleQuery = lifecycleQuery.in('location', locationFilters)
-      }
-
-      if (allowedDepartmentIds.length) {
-        auditQuery = auditQuery.in('department_id', allowedDepartmentIds)
-        findingQuery = findingQuery.in('owner_department_id', allowedDepartmentIds)
-      }
-
-      if (allowedLocationIds.length) {
-        auditQuery = auditQuery.in('location_id', allowedLocationIds)
-        findingQuery = findingQuery.in('location_id', allowedLocationIds)
-      }
+      // Scope only after responses are joined to their canonical audit,
+      // department and location records. The denormalized response fields are
+      // frequently null and store location names while access mappings store
+      // location codes; filtering them here removes valid rows before the
+      // existing canAccessScope() check can evaluate the canonical values.
 
       if (filters.startDate) {
-        lifecycleQuery = lifecycleQuery.gte('created_at', filters.startDate)
-        auditQuery = auditQuery.gte('created_at', filters.startDate)
-        findingQuery = findingQuery.gte('created_at', filters.startDate)
-        evidenceQuery = evidenceQuery.gte('uploaded_at', filters.startDate)
+        const startBoundary = dateBoundaryIso(filters.startDate)
+        lifecycleQuery = lifecycleQuery.gte('created_at', startBoundary)
+        auditQuery = auditQuery.gte('created_at', startBoundary)
+        findingQuery = findingQuery.gte('created_at', startBoundary)
+        evidenceQuery = evidenceQuery.gte('uploaded_at', startBoundary)
       }
 
       if (filters.endDate) {
-        lifecycleQuery = lifecycleQuery.lte('created_at', `${filters.endDate}T23:59:59`)
-        auditQuery = auditQuery.lte('created_at', `${filters.endDate}T23:59:59`)
-        findingQuery = findingQuery.lte('created_at', `${filters.endDate}T23:59:59`)
-        evidenceQuery = evidenceQuery.lte('uploaded_at', `${filters.endDate}T23:59:59`)
+        const endBoundary = dateBoundaryIso(filters.endDate, true)
+        lifecycleQuery = lifecycleQuery.lte('created_at', endBoundary)
+        auditQuery = auditQuery.lte('created_at', endBoundary)
+        findingQuery = findingQuery.lte('created_at', endBoundary)
+        evidenceQuery = evidenceQuery.lte('uploaded_at', endBoundary)
       }
 
       let responsesResult
@@ -375,7 +355,7 @@ export default function ReportsDashboard() {
         locations: locationsResult.data || [],
         evidence: evidenceResult.data || [],
         lifecycle: lifecycleData,
-      }).filter(row => accessibleRow(user, row))
+      }).filter(row => accessibleRow(user, row, roleProfile.id))
 
       const summaryRows = groupSummaryRows(joinedRows)
       const filteredRows = filterRows(joinedRows, filters)
@@ -415,14 +395,6 @@ export default function ReportsDashboard() {
   const snapshot = useMemo(() => buildDashboardSnapshot({ audits: filteredAudits, rows: filteredRows }), [filteredAudits, filteredRows])
   const lifecycleSummary = useMemo(() => buildLifecycleSummary(filteredRows), [filteredRows])
   const lifecycleSnapshot = useMemo(() => buildLifecycleSnapshot(filteredRows), [filteredRows])
-
-  const summaryRows = useMemo(() => {
-    const source = tab === 'executive' ? filteredRows : buildTableData(tab, filteredRows, data.summaryRows)
-    return source.map(row => ({
-      ...row,
-      status: row.status || row.auditStatus || '',
-    }))
-  }, [data.summaryRows, filteredRows, tab])
 
   const activeSearch = searchByTab[tab] || ''
   const activeSort = sortState
@@ -479,11 +451,6 @@ export default function ReportsDashboard() {
   function exportMonetaryReport() {
     exportRowsToExcel(buildTableData('monetary', filteredRows, data.summaryRows), 'Monetary Approval Report.xlsx', 'Monetary Approval Report')
   }
-
-  const activeTabRows = useMemo(() => {
-    const base = tab === 'executive' ? filteredRows : buildTableData(tab, filteredRows, data.summaryRows)
-    return sortRows(base, activeSort.key, activeSort.direction)
-  }, [activeSort.direction, activeSort.key, data.summaryRows, filteredRows, tab])
 
   const currentPage = pageByTab[tab] || 1
   const pageSize = 8
@@ -562,7 +529,7 @@ export default function ReportsDashboard() {
   const tabs = useMemo(() => getVisibleTabs(roleProfile.id), [roleProfile.id])
   const currentTabConfig = tabs.find(item => item.key === tab) || tabs[0] || tabConfig[0]
 
-  const selectedExportRows = buildTableData(tab, filteredRows, data.summaryRows)
+  const selectedExportRows = buildTableData(tab, filteredRows, filteredAudits)
   const visibleKpis = roleKpiConfig[roleProfile.id]
   const visibleCharts = roleChartConfig[roleProfile.id]
 
@@ -579,7 +546,7 @@ export default function ReportsDashboard() {
     <PageHeader
       eyebrow="REPORTS / ANALYTICS"
       title="DISHA HSC Reports & Analytics"
-      description={`Role-based reporting for ${roleName}. ${roleProfile.id === 'group-functional-hod' ? 'Department scope is locked to your access mapping.' : focus ? `Drill-down: ${focus.label} - ${focus.value}` : 'Click any KPI or chart segment to inspect details.'}`}
+      description={`Role-based reporting for ${roleName}. ${roleProfile.id === 'group-functional-hod' ? 'Department access is enforced from your access mapping; filters refine the visible scope.' : focus ? `Drill-down: ${focus.label} - ${focus.value}` : 'Click any KPI or chart segment to inspect details.'}`}
       action={<div className="report-page-actions">
         <button className="secondary-button" type="button" onClick={loadData} disabled={loading}><RefreshCcw size={16} /> Refresh</button>
         <button className="secondary-button" type="button" onClick={exportSummaryPdf}><FileDown size={16} /> Export Summary PDF</button>
@@ -596,7 +563,6 @@ export default function ReportsDashboard() {
       visibleFields={roleProfile.id === 'group-functional-hod'
         ? ['startDate', 'endDate', 'location', 'department', 'pic', 'status', 'severity', 'rootCauseCategory', 'search']
         : undefined}
-      lockedFields={departmentLocked ? ['department'] : []}
     />
 
     {loading && <section className="card report-skeleton">
@@ -631,8 +597,8 @@ export default function ReportsDashboard() {
             <p>{filteredRows.length} row(s) match the current filter set.</p>
           </div>
           <div className="report-drilldown-actions">
-            <button className="secondary-button" type="button" onClick={() => exportCurrentExcel(buildTableData(tab, filteredRows, data.summaryRows), `${exportTitle}.xlsx`)}><Download size={16} /> Export filtered Excel</button>
-            <button className="secondary-button" type="button" onClick={() => exportCurrentCsv(buildTableData(tab, filteredRows, data.summaryRows), `${exportTitle}.csv`)}><Download size={16} /> Export filtered CSV</button>
+            <button className="secondary-button" type="button" onClick={() => exportCurrentExcel(buildTableData(tab, filteredRows, filteredAudits), `${exportTitle}.xlsx`)}><Download size={16} /> Export filtered Excel</button>
+            <button className="secondary-button" type="button" onClick={() => exportCurrentCsv(buildTableData(tab, filteredRows, filteredAudits), `${exportTitle}.csv`)}><Download size={16} /> Export filtered CSV</button>
           </div>
         </div>
         <div className="report-export-strip">

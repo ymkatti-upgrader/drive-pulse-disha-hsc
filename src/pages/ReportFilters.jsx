@@ -31,7 +31,7 @@ export default function ReportFilters({ value, options, onChange, onRefresh, loa
     </div>
 
     <div className="report-filter-grid">
-      {show('startDate') && show('endDate') && <label className="report-filter-field">
+      {show('startDate') && show('endDate') && <label className="report-filter-field report-date-field">
         <span>Date range</span>
         <div className="report-date-grid">
           <div className="report-date-input">

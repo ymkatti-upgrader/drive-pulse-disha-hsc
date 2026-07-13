@@ -10,6 +10,13 @@ function toDate(value) {
   return Number.isNaN(date.getTime()) ? null : date
 }
 
+function toFilterDate(value, endOfDay = false) {
+  if (!value) return null
+  const [year, month, day] = String(value).split('-').map(Number)
+  if (!year || !month || !day) return toDate(value)
+  return new Date(year, month - 1, day, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0)
+}
+
 export function formatDate(value, fallback = '-') {
   const date = toDate(value)
   if (!date) return fallback
@@ -190,6 +197,7 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
       const audit = resolveAuditForResponse(row, auditMap) || {}
       const finding = findingByResponse.get(row.id) || {}
       const auditLocation = row.audit_location || locationMap.get(audit.location_id)?.name || locationMap.get(audit.location_id)?.code || ''
+      const auditLocationCode = locationMap.get(audit.location_id)?.code || ''
       const auditDepartment = row.audit_department || departmentMap.get(audit.department_id)?.name || ''
       const auditor = userMap.get(audit.auditor_id)?.employee_name || audit.auditor_name || ''
       const pic = row.pic_for_ng_name
@@ -245,6 +253,7 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
         locationId: audit.location_id || '',
         departmentId: audit.department_id || '',
         location: auditLocation || '',
+        locationCode: auditLocationCode,
         department: auditDepartment || '',
         auditor,
         auditorId: audit.auditor_id || '',
@@ -303,8 +312,8 @@ export function buildReportRows({ audits = [], responses = [], findings = [], us
 }
 
 export function filterRows(rows, filters = {}) {
-  const startDate = filters.startDate ? toDate(filters.startDate) : null
-  const endDate = filters.endDate ? toDate(filters.endDate) : null
+  const startDate = toFilterDate(filters.startDate)
+  const endDate = toFilterDate(filters.endDate, true)
   const location = normalizedText(filters.location)
   const department = normalizedText(filters.department)
   const auditType = normalizedText(filters.auditType)
@@ -384,13 +393,14 @@ export function sortRows(rows, sortKey, sortDirection = 'desc') {
 }
 
 export function paginateRows(rows, page = 1, pageSize = 10) {
-  const safePage = Math.max(1, Number(page) || 1)
   const safeSize = Math.max(1, Number(pageSize) || 10)
+  const totalPages = Math.max(1, Math.ceil((rows || []).length / safeSize))
+  const safePage = Math.min(totalPages, Math.max(1, Number(page) || 1))
   const start = (safePage - 1) * safeSize
   return {
     page: safePage,
     pageSize: safeSize,
-    totalPages: Math.max(1, Math.ceil((rows || []).length / safeSize)),
+    totalPages,
     rows: (rows || []).slice(start, start + safeSize),
   }
 }
